@@ -1,0 +1,49 @@
+# IDE & OS
+.trae
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.lerna-debug.log*
+
+# Env files (keep .env.example tracked)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+
+# SQLite database
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ChromaDB persistence
+chroma_storage/
+
+# File storage (STORAGE_ROOT default)
+data/
+!data/.gitkeep
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Logs
+logs/
+*.log
