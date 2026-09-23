@@ -1,13 +1,12 @@
 ## Context
 
-项目为纯 greenfield（`openspec/changes/archive/` 之外无任何应用代码）。后端技术栈已确定为 Node.js + Express + TypeScript + SQLite + ChromaDB；前端为 React + TypeScript + Vite；文件存储在本地磁盘。完整需求与约束见 proposal.md。
+项目为纯 greenfield（`openspec/changes/archive/` 之外无任何应用代码）。后端技术栈已确定为 Node.js + Express + TypeScript + SQLite；前端为 React + TypeScript + Vite；文件存储在本地磁盘。向量化/语义检索预留给后续迭代。完整需求与约束见 proposal.md。
 
 ## Goals / Non-Goals
 
 **Goals:**
 - 提供清晰的后端分层结构，使数据隔离、鉴权、业务逻辑分层解耦
 - 设计稳定的数据库 schema，一次性满足 MVP 所有查询需求
-- 确定 ChromaDB embedding 方案（本地或外部 API），并为后续扩展留口
 - 确立初始化流程与环境变量约定，使开发者 clone 后能一键启动
 - 使每个 API 端点都通过中间件/守卫函数统一处理鉴权与隔离，不散落于 handler
 
@@ -35,23 +34,17 @@
 
 **备选：** `sqlite3`（回调）、`sequelize` / `prisma`（ORM）— ORM 在 greenfield 阶段引入过度抽象，手写 SQL 更透明。
 
-### D3: ChromaDB 集成方式
+### D3: 知识库文档存储约定
 
-使用 ChromaDB 官方 `chromadb` NPM 包，以 **HTTP 客户端模式**连接本地 ChromaDB 实例。ChromaDB 独立进程运行（`chroma run --host localhost --port 8000`），不做嵌入式本地持久化。
+知识库文档（非向量化）与教学资料类似按 `<STORAGE_ROOT>/schools/<school>/classes/<classId>/kbs/<kbId>/docs/<uuid>_<originalName>` 落盘。数据库 kb_documents 表记录元数据。后续向量化迭代时，在不改变存储路径的前提下新增 ChromaDB 写入层。
 
-**理由：** ChromaDB 的 JS 生态成熟度不如 Python，HTTP 客户端模式最稳定。独立进程便于后续扩展为远端 ChromaDB 服务，开发阶段仍可同机运行。
+**理由：** 与 materials 存储结构保持一致，统一了 `resolvePath` 调用模式。未来加向量化时只需在现有落盘逻辑后追加 embed + upsert，路径和数据库 schema 均无需变更。
 
-**备选：** 嵌入式 `chromadb`（Node.js 侧无正式支持）、Qdrant 本地模式 — 均不如 HTTP 客户端稳妥。
+### 预留：向量化基础设施（预留给后续迭代）
 
-### D4: Embedding 方案
+原 D3（ChromaDB HTTP 客户端集成）、D4（`@xenova/transformers` 本地 embedding）两个决策已在更早版本的 plan 中记录，**不在 MVP 范围**。代码中保留了 `lib/chroma.ts`、`lib/embed.ts`、`lib/chunk.ts`、`lib/pdf-extract.ts` 模块骨架，但 MVP 不会调用它们（或只在失败时降级）。启用时需重新审视这两个决策并补充实测依据。
 
-MVP 采用 `@xenova/transformers` 本地加载 `all-MiniLM-L6-v2` 模型，零外部依赖。代码中封装 `lib/embed.ts` 模块对外暴露 `embed(text: string | string[])` 函数。模块内部可切换到 API 调用（如 Ollama、OpenAI Embeddings），但 MVP 不实现此分支。
-
-**理由：** 本地方案最快落地，模型轻量（~23MB），语义检索效果够用。切 API 的需求在生产化时自然出现。
-
-**备选：** `@xenova/transformers` 之外调用远端 API — 引入网络依赖与 API key 管理复杂度。
-
-### D5: 文件存储路径
+### D4: 文件存储路径（原 D5）
 
 `<STORAGE_ROOT>/schools/<school>/classes/<classId>/...`。`STORAGE_ROOT` 环境变量默认值为 `./data`。
 
@@ -59,13 +52,13 @@ MVP 采用 `@xenova/transformers` 本地加载 `all-MiniLM-L6-v2` 模型，零�
 
 **备选：** 扁平目录 + 元数据映射表 — 文件系统层面隔离弱一层。
 
-### D6: API 错误处理
+### D5: API 错误处理
 
 统一错误格式 `{ "error": "CODE", "message": "human readable" }` + Express 全局错误处理中间件。路由 handler 内部 `throw` 自定义错误（带 HTTP 状态码 + error code），由顶层中间件捕获并序列化。
 
 **理由：** 与 proposal 中约定的错误响应结构一致。Express 4/5 的 error-handling 中间件模式成熟，无需引入专用框架。
 
-### D7: JWT 方案
+### D6: JWT 方案
 
 使用 `jsonwebtoken` 库签发 HS256 JWT，payload 为 `{ userId, school, studentId, role, name }`，有效期 7 天。密钥由 `JWT_SECRET` 环境变量提供。无 refresh token（MVP）。
 
@@ -73,9 +66,9 @@ MVP 采用 `@xenova/transformers` 本地加载 `all-MiniLM-L6-v2` 模型，零�
 
 **备选：** RS256、session + Redis — 过度设计。
 
-### D8: SQLite 数据库文件位置
+### D7: SQLite 数据库文件位置
 
-SQLite 数据库是单文件 `campusclaw.db`，存放在 `./data/campusclaw.db`。路径由 `SQLITE_PATH` 环境变量配置，默认值 `./data/campusclaw.db`。与 D5 的 `STORAGE_ROOT=./data` 共享同一个 `./data/` 根目录，使部署时只需迁移 `./data/` 一个目录即可同时保留关系数据和文件存储。
+SQLite 数据库是单文件 `campusclaw.db`，存放在 `./data/campusclaw.db`。路径由 `SQLITE_PATH` 环境变量配置，默认值 `./data/campusclaw.db`。与 D4 的 `STORAGE_ROOT=./data` 共享同一个 `./data/` 根目录，使部署时只需迁移 `./data/` 一个目录即可同时保留关系数据和文件存储。
 
 **理由：** SQLite 本身单文件，无需额外目录；与 STORAGE_ROOT 共享根目录方便整体备份/迁移。
 
@@ -152,8 +145,8 @@ SQLite 数据库是单文件 `campusclaw.db`，存放在 `./data/campusclaw.db`�
 | original_name | TEXT | NOT NULL | 用户上传的原始文件名 |
 | stored_path | TEXT | NOT NULL | 磁盘绝对或相对路径 |
 | mime | TEXT | | 可空 |
-| chunk_count | INTEGER | NOT NULL DEFAULT 0 | 解析后 chunk 数 |
-| indexed_at | INTEGER | NOT NULL | 向量化完成时间 epoch ms |
+| chunk_count | INTEGER | NOT NULL DEFAULT 0 | 预留给后续向量化迭代，MVP 固定为 0 |
+| uploaded_at | INTEGER | NOT NULL | 文档上传/处理完成时间 epoch ms（原 indexed_at，MVP 改名语义更准确） |
 
 **索引**: `CREATE INDEX idx_kb_docs_kb ON kb_documents(kb_id)`
 
@@ -182,17 +175,14 @@ SELECT c.school FROM materials m
 WHERE m.id = ?
 ```
 
-## ChromaDB 约定
+## ChromaDB 约定（预留给后续迭代）
+
+MVP 阶段不使用 ChromaDB。后续迭代启用时，原约定如下（参考）：
 
 - **运行方式**: ChromaDB 作为独立 HTTP 进程，地址由 `CHROMA_URL` 环境变量配置（默认 `http://localhost:8000`）
-- **Collection**: MVP 只用一个 collection（名字如 `campusclaw-kbs`），不同 KB 通过 **metadata 过滤** 隔离，不在 ChromaDB 层面建多个 collection
-- **每条文档（chunk）的 metadata**:
-  ```json
-  { "kbId": "<kb_uuid>", "documentId": "<doc_uuid>", "school": "<school_code>", "chunkIndex": 42 }
-  ```
-- **查询流程**: query 文本先 embed → 在 ChromaDB collection 里 search → `WHERE metadata.kbId = ? AND metadata.school = ? LIMIT topK`
+- **Collection**: 只用一个 collection，不同 KB 通过 metadata 过滤隔离
+- **每条文档（chunk）的 metadata**: `{ kbId, documentId, school, chunkIndex }`
 - **Embedding 维度**: 384（`all-MiniLM-L6-v2` 输出）
-- **持久化**: ChromaDB 自身有持久化机制（默认 `./chroma_storage/`），不在应用层手动管理
 
 ## 完整环境变量清单
 
@@ -202,18 +192,16 @@ WHERE m.id = ?
 | `ADMIN_INITIAL_PASSWORD` | — | ✅ | 首次启动时 admin 账户密码 |
 | `STORAGE_ROOT` | `./data` | 否 | 文件存储根目录 |
 | `SQLITE_PATH` | `./data/campusclaw.db` | 否 | SQLite 数据库文件路径 |
-| `CHROMA_URL` | `http://localhost:8000` | 否 | ChromaDB HTTP 地址 |
 | `PORT` | `3000` | 否 | Express 监听端口 |
+
+> 后续迭代启用 ChromaDB 时，需新增 `CHROMA_URL` 环境变量。
 
 ## Risks / Trade-offs
 
 | 风险/权衡 | 缓解策略 |
 |-----------|---------|
-| ChromaDB HTTP 模式多一个依赖进程，首次部署需要额外启动步骤 | README 明确列出启动顺序（ChromaDB → 后端 → 前端）；Docker Compose 一键启动（后续任务） |
-| `@xenova/transformers` 模型首次加载较慢（数秒） | 在应用启动时预热一次（调用 embed.ts 空函数），避免首个请求卡顿 |
 | SQLite 单写限制，后续并发提升需要切换 | MVP 阶段并发可忽略；迁移 PostgreSQL 的任务在非 goals 之外，等真正需要时评估 |
 | bcrypt 加盐轮次默认 10，慢但安全 | 保持默认，登录响应时间实测在可接受范围（<100ms） |
-| pdfjs-dist 在 Node 环境下体积较大 | 用动态 import 或单独的 worker 进程处理，避免阻塞主事件循环 |
 
 ## Open Questions
 
