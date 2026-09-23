@@ -1,0 +1,26 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:-campusclaw-change-this-in-production-please}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-admin123}
+      SQLITE_PATH: /app/data/campusclaw.db
+      STORAGE_ROOT: /app/data
+      PORT: 3000
+    volumes:
+      - campusclaw-data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    restart: unless-stopped
+
+volumes:
+  campusclaw-data:
