@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api';
-import type { Material, KnowledgeBase, KBDocument, QueryResult, User, MembersResponse } from '../types';
+import type { Material, KnowledgeBase, KBDocument, QueryResult, User, MembersResponse, Citation, QAResponse } from '../types';
 
 export default function ClassDetailPage() {
   const { classId } = useParams<{ classId: string }>();
@@ -27,6 +27,13 @@ export default function ClassDetailPage() {
   const [showChunkOverride, setShowChunkOverride] = useState<Record<string, boolean>>({});
   const [overrideChunkSize, setOverrideChunkSize] = useState<Record<string, number>>({});
   const [overrideChunkOverlap, setOverrideChunkOverlap] = useState<Record<string, number>>({});
+
+  const [qaMode, setQaMode] = useState<'query' | 'qa'>('query');
+  const [qaInput, setQaInput] = useState('');
+  const [qaLoading, setQaLoading] = useState(false);
+  const [qaResult, setQaResult] = useState<QAResponse | null>(null);
+  const [qaError, setQaError] = useState<string | null>(null);
+  const [expandedCitation, setExpandedCitation] = useState<number | null>(null);
 
   const [members, setMembers] = useState<MembersResponse>({ teachers: [], students: [] });
   const [memberTab, setMemberTab] = useState<'teachers' | 'students'>('students');
@@ -174,6 +181,64 @@ export default function ClassDetailPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleQA() {
+    if (!qaInput.trim() || selectedKbIds.size === 0) return;
+    setQaLoading(true);
+    setQaError(null);
+    setQaResult(null);
+    setExpandedCitation(null);
+    try {
+      const kbIds = Array.from(selectedKbIds);
+      const res = await api.post<QAResponse>(`/classes/${classId}/kbs/qa`, { kbIds, question: qaInput.trim(), topK: 5 });
+      setQaResult(res.data);
+    } catch (err: any) {
+      const status = err.response?.status;
+      const msg = err.response?.data?.message || err.message || '问答失败';
+      if (status === 503) {
+        setQaError('LLM 未配置 — 请在 .env 中设置 LLM_BASE_URL 和 LLM_MODEL');
+      } else {
+        setQaError(msg);
+      }
+    } finally {
+      setQaLoading(false);
+    }
+  }
+
+  function renderAnswerWithCitations(answer: string, citations: Citation[]) {
+    if (!answer) return null;
+    const citationMap = new Map(citations.map((c) => [c.id, c]));
+    const regex = /\[(\d+)\]/g;
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(answer)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(answer.slice(lastIndex, match.index));
+      }
+      const num = parseInt(match[1], 10);
+      const hasCitation = citationMap.has(num);
+      parts.push(
+        hasCitation ? (
+          <sup
+            key={`cit-${match.index}`}
+            onClick={() => setExpandedCitation(expandedCitation === num ? null : num)}
+            style={{ color: '#007aff', cursor: 'pointer', fontWeight: 600, textDecoration: 'underline' }}
+            title={`点击展开引用 [${num}]`}
+          >
+            [{num}]
+          </sup>
+        ) : (
+          <sup key={`cit-${match.index}`} style={{ color: '#8e8e93' }}>[{num}]</sup>
+        )
+      );
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < answer.length) {
+      parts.push(answer.slice(lastIndex));
+    }
+    return parts;
   }
 
   async function handleDownloadMaterial(fileId: string, name: string) {
@@ -495,34 +560,170 @@ export default function ClassDetailPage() {
                   )}
                 </div>
                 <div className="card">
-                  <h4 style={{ marginBottom: 12 }}>向量检索 {selectedKbIds.size > 0 && <span style={{ fontSize: 12, color: '#8e8e93', fontWeight: 'normal' }}>({selectedKbIds.size} 个知识库)</span>}</h4>
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                    <input
-                      type="text"
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      placeholder="输入自然语言查询..."
-                      style={{ marginBottom: 0, flex: 1 }}
-                      onKeyDown={(e) => e.key === 'Enter' && handleQuery()}
-                    />
-                    <button onClick={handleQuery} disabled={loading || !query.trim() || selectedKbIds.size === 0}>
-                      {loading ? '搜索中...' : '搜索'}
-                    </button>
+                  <div style={{ display: 'flex', gap: 16, marginBottom: 12, borderBottom: '1px solid #e5e5ea', paddingBottom: 8 }}>
+                    <span
+                      onClick={() => setQaMode('query')}
+                      style={{
+                        cursor: 'pointer',
+                        fontWeight: qaMode === 'query' ? 600 : 400,
+                        color: qaMode === 'query' ? '#007aff' : '#8e8e93',
+                        fontSize: 14,
+                        padding: '4px 0',
+                        borderBottom: qaMode === 'query' ? '2px solid #007aff' : '2px solid transparent',
+                      }}
+                    >
+                      向量检索 {selectedKbIds.size > 0 && <span style={{ fontSize: 12, color: '#8e8e93', fontWeight: 'normal' }}>({selectedKbIds.size} 个 KB)</span>}
+                    </span>
+                    {isTeacherOrAdmin && (
+                      <span
+                        onClick={() => setQaMode('qa')}
+                        style={{
+                          cursor: 'pointer',
+                          fontWeight: qaMode === 'qa' ? 600 : 400,
+                          color: qaMode === 'qa' ? '#007aff' : '#8e8e93',
+                          fontSize: 14,
+                          padding: '4px 0',
+                          borderBottom: qaMode === 'qa' ? '2px solid #007aff' : '2px solid transparent',
+                        }}
+                      >
+                        知识问答 {selectedKbIds.size > 0 && <span style={{ fontSize: 12, color: '#8e8e93', fontWeight: 'normal' }}>({selectedKbIds.size} 个 KB)</span>}
+                      </span>
+                    )}
                   </div>
-                  {selectedKbIds.size === 0 && (
-                    <div style={{ color: '#ff9500', fontSize: 13, marginBottom: 8 }}>请先选择至少一个知识库进行检索</div>
-                  )}
-                  {queryResults.map((r, i) => (
-                    <div key={i} className="query-result">
-                      <div className="chunk">{r.chunk}</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
-                        <div style={{ fontSize: 12, color: '#007aff' }}>📄 {r.originalName}</div>
-                        <div className="distance">distance: {r.distance.toFixed(4)}</div>
+
+                  {qaMode === 'query' && (
+                    <>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        <input
+                          type="text"
+                          value={query}
+                          onChange={(e) => setQuery(e.target.value)}
+                          placeholder="输入自然语言查询..."
+                          style={{ marginBottom: 0, flex: 1 }}
+                          onKeyDown={(e) => e.key === 'Enter' && handleQuery()}
+                        />
+                        <button onClick={handleQuery} disabled={loading || !query.trim() || selectedKbIds.size === 0}>
+                          {loading ? '搜索中...' : '搜索'}
+                        </button>
                       </div>
-                    </div>
-                  ))}
-                  {queryResults.length === 0 && query && !loading && selectedKbIds.size > 0 && (
-                    <div style={{ color: '#8e8e93', fontSize: 13 }}>无匹配结果</div>
+                      {selectedKbIds.size === 0 && (
+                        <div style={{ color: '#ff9500', fontSize: 13, marginBottom: 8 }}>请先选择至少一个知识库进行检索</div>
+                      )}
+                      {queryResults.map((r, i) => (
+                        <div key={i} className="query-result">
+                          <div className="chunk">{r.chunk}</div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                            <div style={{ fontSize: 12, color: '#007aff' }}>📄 {r.originalName} · chunk #{r.chunkIndex}</div>
+                            <div className="distance">distance: {r.distance.toFixed(4)}</div>
+                          </div>
+                          <div style={{ fontSize: 11, color: '#8e8e93', marginTop: 2 }}>
+                            {r.startOffset != null && r.endOffset != null
+                              ? `位置: 第 ${r.startOffset}-${r.endOffset} 字符`
+                              : '位置: 未知（旧索引文档，重新索引可补齐）'}
+                          </div>
+                        </div>
+                      ))}
+                      {queryResults.length === 0 && query && !loading && selectedKbIds.size > 0 && (
+                        <div style={{ color: '#8e8e93', fontSize: 13 }}>无匹配结果</div>
+                      )}
+                    </>
+                  )}
+
+                  {qaMode === 'qa' && (
+                    <>
+                      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                        <input
+                          type="text"
+                          value={qaInput}
+                          onChange={(e) => setQaInput(e.target.value)}
+                          placeholder="向知识库提问..."
+                          style={{ marginBottom: 0, flex: 1 }}
+                          onKeyDown={(e) => e.key === 'Enter' && handleQA()}
+                        />
+                        <button onClick={handleQA} disabled={qaLoading || !qaInput.trim() || selectedKbIds.size === 0}>
+                          {qaLoading ? '思考中...' : '提问'}
+                        </button>
+                      </div>
+                      {selectedKbIds.size === 0 && (
+                        <div style={{ color: '#ff9500', fontSize: 13, marginBottom: 8 }}>请先选择至少一个知识库进行问答</div>
+                      )}
+                      {qaError && (
+                        <div style={{ color: '#ff3b30', fontSize: 13, marginBottom: 8 }}>⚠ {qaError}</div>
+                      )}
+                      {qaResult && (
+                        <>
+                          <div style={{
+                            background: '#f2f2f7',
+                            padding: 12,
+                            borderRadius: 8,
+                            marginBottom: 12,
+                            fontSize: 14,
+                            lineHeight: 1.7,
+                            whiteSpace: 'pre-wrap',
+                          }}>
+                            {renderAnswerWithCitations(qaResult.answer, qaResult.citations)}
+                          </div>
+                          {(() => {
+                            const citedIds = new Set<number>();
+                            const m = qaResult.answer.match(/\[(\d+)\]/g);
+                            if (m) for (const x of m) citedIds.add(parseInt(x.slice(1, -1), 10));
+                            const citedCitations = qaResult.citations.filter((c) => citedIds.has(c.id));
+                            if (citedCitations.length === 0) return null;
+                            return (
+                              <>
+                                <div style={{ fontSize: 12, color: '#8e8e93', marginBottom: 6, fontWeight: 500 }}>
+                                  引用的知识库片段 ({citedCitations.length})
+                                </div>
+                                {citedCitations.map((c) => {
+                                  const isOpen = expandedCitation === c.id;
+                                  return (
+                                    <div
+                                      key={c.id}
+                                      style={{
+                                        border: '1px solid #e5e5ea',
+                                        borderRadius: 8,
+                                        marginBottom: 6,
+                                        overflow: 'hidden',
+                                      }}
+                                    >
+                                      <div
+                                        onClick={() => setExpandedCitation(isOpen ? null : c.id)}
+                                        style={{
+                                          padding: '8px 12px',
+                                          cursor: 'pointer',
+                                          background: isOpen ? '#fff5e6' : '#fafafa',
+                                          display: 'flex',
+                                          justifyContent: 'space-between',
+                                          alignItems: 'center',
+                                          fontSize: 12,
+                                        }}
+                                      >
+                                        <span>
+                                          <strong style={{ color: '#007aff' }}>[{c.id}]</strong>{' '}
+                                          📄 {c.originalName} · chunk #{c.chunkIndex} ·{' '}
+                                          {c.startOffset != null && c.endOffset != null
+                                            ? `第 ${c.startOffset}-${c.endOffset} 字符`
+                                            : '未知位置'}
+                                        </span>
+                                        <span style={{ color: '#8e8e93' }}>{isOpen ? '▼' : '▶'}</span>
+                                      </div>
+                                      {isOpen && (
+                                        <div style={{ padding: '10px 12px', fontSize: 13, background: '#fff', borderTop: '1px solid #e5e5ea', whiteSpace: 'pre-wrap' }}>
+                                          {c.chunk}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </>
+                            );
+                          })()}
+                        </>
+                      )}
+                      {!qaResult && !qaError && !qaLoading && qaInput && (
+                        <div style={{ color: '#8e8e93', fontSize: 13 }}>点击"提问"开始知识问答</div>
+                      )}
+                    </>
                   )}
                 </div>
               </>

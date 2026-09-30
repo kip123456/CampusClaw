@@ -9,6 +9,8 @@ export const MAX_OVERLAP = 1000;
 export interface Chunk {
   text: string;
   index: number;
+  startOffset: number;
+  endOffset: number;
 }
 
 export interface ChunkConfig {
@@ -66,7 +68,7 @@ export function chunkText(
       }
     }
     if (piece.trim().length > 0) {
-      result.push({ text: piece, index });
+      result.push({ text: piece, index, startOffset: start, endOffset: start + piece.length });
       index++;
     }
     if (end >= text.length) break;

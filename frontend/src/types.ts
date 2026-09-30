@@ -87,4 +87,21 @@ export interface QueryResult {
   documentId: string;
   originalName: string;
   chunkIndex: number;
+  startOffset: number | null;
+  endOffset: number | null;
+}
+
+export interface Citation {
+  id: number;
+  chunk: string;
+  documentId: string;
+  originalName: string;
+  chunkIndex: number;
+  startOffset: number | null;
+  endOffset: number | null;
+}
+
+export interface QAResponse {
+  answer: string;
+  citations: Citation[];
 }

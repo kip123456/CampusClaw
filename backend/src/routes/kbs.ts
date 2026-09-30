@@ -10,6 +10,8 @@ import { enqueueIndexTask } from '../lib/index-queue';
 import { deleteDocumentChunks, queryChunks } from '../lib/chroma';
 import { embedSingle } from '../lib/embed';
 import { validateChunkConfig, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP } from '../lib/chunk';
+import { answerWithRAG } from '../lib/qa';
+import { isLLMConfigured } from '../lib/llm';
 
 export const kbsRouter = Router();
 
@@ -318,9 +320,61 @@ kbsRouter.post(
       documentId: r.documentId,
       originalName: docMap.get(r.documentId) || '',
       chunkIndex: r.chunkIndex,
+      startOffset: r.startOffset,
+      endOffset: r.endOffset,
     }));
 
     res.json(withOriginals);
+  }
+);
+
+kbsRouter.post(
+  '/:classId/kbs/qa',
+  authMiddleware,
+  guardSchool,
+  guardClassMember,
+  guardClassTeacher,
+  async (req: Request, res: Response) => {
+    if (!isLLMConfigured()) {
+      return res.status(503).json({
+        error: 'SERVICE_UNAVAILABLE',
+        message: 'LLM not configured — set LLM_BASE_URL and LLM_MODEL in .env',
+      });
+    }
+
+    const classId = req.params.classId;
+    const { kbIds, question, topK } = req.body || {};
+
+    if (!Array.isArray(kbIds) || kbIds.length === 0) {
+      throw new CustomError('kbIds must be a non-empty array', 400, 'BAD_REQUEST');
+    }
+    if (kbIds.length > 20) {
+      throw new CustomError('kbIds must not exceed 20 items', 400, 'BAD_REQUEST');
+    }
+    if (!question || typeof question !== 'string' || question.trim().length === 0) {
+      throw new CustomError('question must be a non-empty string', 400, 'BAD_REQUEST');
+    }
+
+    const kbRows = db
+      .prepare(`SELECT id FROM knowledge_bases WHERE class_id = ? AND id IN (${kbIds.map(() => '?').join(',')})`)
+      .all(classId, ...kbIds) as { id: string }[];
+    if (kbRows.length !== kbIds.length) {
+      const validIds = new Set(kbRows.map((r) => r.id));
+      const invalid = kbIds.filter((id: string) => !validIds.has(id));
+      throw new CustomError(`Invalid kbIds: ${invalid.join(', ')}`, 400, 'BAD_REQUEST');
+    }
+
+    const effectiveTopK = Math.min(topK ?? 5, 15);
+
+    try {
+      const result = await answerWithRAG(question, kbIds, classId, effectiveTopK);
+      res.json(result);
+    } catch (err: any) {
+      if (err?.message?.includes('LLM API')) {
+        return res.status(502).json({ error: 'LLM_ERROR', message: err.message });
+      }
+      throw err;
+    }
   }
 );
 

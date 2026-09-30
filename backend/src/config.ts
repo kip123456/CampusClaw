@@ -12,6 +12,9 @@ export const config = {
   embedModel: process.env.EMBED_MODEL || '',
   embedDim: parseInt(process.env.EMBED_DIM || '2048', 10),
   embedApiKey: process.env.EMBED_API_KEY || '',
+  llmBaseUrl: process.env.LLM_BASE_URL || '',
+  llmModel: process.env.LLM_MODEL || '',
+  llmApiKey: process.env.LLM_API_KEY || '',
 };
 
 const missing: string[] = [];
@@ -25,6 +28,10 @@ if (missing.length > 0) {
 
 if (!config.embedBaseUrl || !config.embedModel) {
   console.warn('[CONFIG] EMBED_BASE_URL or EMBED_MODEL not set — embedding/indexing features will be unavailable. Set these in .env to enable.');
+}
+
+if (!config.llmBaseUrl || !config.llmModel) {
+  console.warn('[CONFIG] LLM_BASE_URL or LLM_MODEL not set — teacher Q&A features will be unavailable. Set these in .env to enable.');
 }
 
 export function generateId(): string {

@@ -21,6 +21,8 @@ export async function getOrCreateCollection() {
 export interface ChunkInput {
   text: string;
   index: number;
+  startOffset?: number;
+  endOffset?: number;
 }
 
 export async function upsertChunks(
@@ -39,6 +41,8 @@ export async function upsertChunks(
     school,
     classId,
     chunkIndex: c.index,
+    ...(c.startOffset !== undefined ? { startOffset: c.startOffset } : {}),
+    ...(c.endOffset !== undefined ? { endOffset: c.endOffset } : {}),
   }));
   const documents = chunks.map((c) => c.text);
   const embeddings = await embed(documents);
@@ -51,6 +55,8 @@ export interface QueryResult {
   documentId: string;
   originalName?: string;
   chunkIndex: number;
+  startOffset: number | null;
+  endOffset: number | null;
 }
 
 export async function queryChunks(
@@ -84,6 +90,8 @@ export async function queryChunks(
         distance: distances[i] ?? Infinity,
         documentId: meta?.documentId || '',
         chunkIndex: meta?.chunkIndex ?? i,
+        startOffset: meta?.startOffset ?? null,
+        endOffset: meta?.endOffset ?? null,
       });
     }
   }
