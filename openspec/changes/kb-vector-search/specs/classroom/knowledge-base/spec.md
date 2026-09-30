@@ -24,7 +24,7 @@
 - **THEN** 系统返回 HTTP 404 Not Found
 
 ### Requirement: 异步索引队列与状态流转
-系统 MUST 使用 SQLite 持久化的索引队列来保证进程重启后任务不丢失。队列 MUST 有且仅有一个活跃 worker 消费任务，串行执行以控制资源占用。索引流程 MUST 经历：读取文档 → 提取纯文本（PDF/TXT/MD）→ 文本分块 → 嵌入向量化 → upsert 到向量数据库。成功时文档状态置为 "ready" 并记录 `indexed_at`；失败时置为 "failed" 并记录 `error_message`。文档列表接口 MUST 返回 status 字段让前端反映状态。
+系统 MUST 使用 SQLite 持久化的索引队列来保证进程重启后任务不丢失。队列 MUST 有且仅有一个活跃 worker 消费任务，串行执行以控制资源占用。索引流程 MUST 经历：读取文档 → 提取纯文本（PDF/TXT/MD）→ 文本分块 → 通过外部 OpenAI 兼容格式 Embedding API 进行向量化（配置由环境变量 `EMBED_BASE_URL`、`EMBED_MODEL`、`EMBED_DIM`、`EMBED_API_KEY` 提供）→ upsert 到向量数据库。成功时文档状态置为 "ready" 并记录 `indexed_at`；失败时置为 "failed" 并记录 `error_message`。文档列表接口 MUST 返回 status 字段让前端反映状态。
 
 #### Scenario: 索引成功完成
 - **WHEN** 队列 worker 成功完成某文档的全部分块嵌入和 upsert

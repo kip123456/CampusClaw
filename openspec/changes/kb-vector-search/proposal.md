@@ -1,6 +1,6 @@
 ## Why
 
-知识库文档目前只能上传存储，无法被检索利用。后端已经搭好了 ChromaDB 向量存储、嵌入模型（all-MiniLM-L6-v2）、分块器和查询函数，但索引流水线没有串联，`POST /classes/:classId/kbs/:kbId/query` 路由返回 501。前端 ClassDetailPage 已经画好了检索 UI 骨架（输入框、结果列表），只差后端接通。当前迭代先让教师/学生能用自然语言搜到知识库里的相关片段，之后同一套检索能力会接进 AI 问答做 RAG 注入。
+知识库文档目前只能上传存储，无法被检索利用。后端已经搭好了 ChromaDB 向量存储、本地嵌入模型（all-MiniLM-L6-v2）、分块器和查询函数，但索引流水线没有串联，`POST /classes/:classId/kbs/:kbId/query` 路由返回 501。嵌入模型本次迭代改为调用外部 OpenAI 兼容格式 API（通过环境变量配置），为后续 AI 对话 RAG 注入预留同一套外部接口能力。前端 ClassDetailPage 已经画好了检索 UI 骨架（输入框、结果列表），只差后端接通。当前迭代先让教师/学生能用自然语言搜到知识库里的相关片段，之后同一套检索能力会接进 AI 问答做 RAG 注入。
 
 ## What Changes
 
@@ -29,4 +29,4 @@
 - **ChromaDB** — metadata schema 扩展（新增 classId）；已有向量不受影响（classId 是冗余过滤条件）
 - **后端 API** — 新增 3 个接口；修改 1 个接口（documents 列表加 status）；废弃 1 个接口（旧 query 路由）
 - **前端** — ClassDetailPage.tsx 的知识库 tab：文档列表加状态+索引按钮，检索区改多选 KB，结果显示文档名
-- **依赖** — 无新增 npm 包；全部使用已有的 chromadb、transformers、better-sqlite3
+- **依赖** — 移除 @xenova/transformers 本地嵌入依赖；改用外部 HTTP 调用（Node.js 原生 fetch，零新增依赖）；新增环境变量配置（EMBED_BASE_URL、EMBED_MODEL、EMBED_DIM、EMBED_API_KEY）
