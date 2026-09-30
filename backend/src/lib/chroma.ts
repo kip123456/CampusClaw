@@ -1,5 +1,6 @@
 import { ChromaClient } from 'chromadb';
 import { config } from '../config';
+import { embed } from './embed';
 
 let client: ChromaClient | null = null;
 
@@ -26,6 +27,7 @@ export async function upsertChunks(
   kbId: string,
   documentId: string,
   school: string,
+  classId: string,
   chunks: ChunkInput[]
 ): Promise<void> {
   if (chunks.length === 0) return;
@@ -35,27 +37,35 @@ export async function upsertChunks(
     kbId,
     documentId,
     school,
+    classId,
     chunkIndex: c.index,
   }));
   const documents = chunks.map((c) => c.text);
-  await collection.upsert({ ids, documents, metadatas });
+  const embeddings = await embed(documents);
+  await collection.upsert({ ids, documents, embeddings, metadatas });
 }
 
 export interface QueryResult {
   chunk: string;
   distance: number;
   documentId: string;
+  originalName?: string;
   chunkIndex: number;
 }
 
 export async function queryChunks(
-  kbId: string,
-  school: string,
   queryEmbedding: number[],
+  kbIds: string[],
+  classId: string,
   topK: number = 5
 ): Promise<QueryResult[]> {
   const collection = await getOrCreateCollection();
-  const where = { kbId, school };
+  const kbIdCondition =
+    kbIds.length === 1 ? { kbId: kbIds[0] } : { kbId: { $in: kbIds } };
+  const where = {
+    $and: [{ classId }, kbIdCondition],
+  };
+
   const result = await collection.query({
     queryEmbeddings: [queryEmbedding],
     where,

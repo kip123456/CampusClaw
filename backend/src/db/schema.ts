@@ -57,9 +57,24 @@ export const schemaStatements: string[] = [
     stored_path TEXT NOT NULL,
     mime TEXT,
     chunk_count INTEGER NOT NULL DEFAULT 0,
-    uploaded_at INTEGER NOT NULL
+    uploaded_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'uploaded' CHECK(status IN ('uploaded','indexing','ready','failed')),
+    indexed_at INTEGER,
+    error_message TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_kb_docs_kb ON kb_documents(kb_id)`,
+  `CREATE TABLE IF NOT EXISTS index_tasks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES kb_documents(id) ON DELETE CASCADE,
+    kb_id TEXT NOT NULL,
+    class_id TEXT NOT NULL,
+    school TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','done','failed')),
+    error_message TEXT,
+    created_at INTEGER NOT NULL,
+    started_at INTEGER,
+    finished_at INTEGER
+  )`,
   `CREATE TABLE IF NOT EXISTS materials (
     id TEXT PRIMARY KEY,
     class_id TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
@@ -75,5 +90,21 @@ export const schemaStatements: string[] = [
 export function initSchema(): void {
   for (const stmt of schemaStatements) {
     db.exec(stmt);
+  }
+
+  const info = db.prepare('PRAGMA table_info(kb_documents)').all() as { name: string }[];
+  const existingCols = new Set(info.map((c) => c.name));
+
+  if (!existingCols.has('status')) {
+    db.exec(`ALTER TABLE kb_documents ADD COLUMN status TEXT NOT NULL DEFAULT 'uploaded' CHECK(status IN ('uploaded','indexing','ready','failed'))`);
+    console.log('[DB] Migrated: kb_documents.status column added');
+  }
+  if (!existingCols.has('indexed_at')) {
+    db.exec(`ALTER TABLE kb_documents ADD COLUMN indexed_at INTEGER`);
+    console.log('[DB] Migrated: kb_documents.indexed_at column added');
+  }
+  if (!existingCols.has('error_message')) {
+    db.exec(`ALTER TABLE kb_documents ADD COLUMN error_message TEXT`);
+    console.log('[DB] Migrated: kb_documents.error_message column added');
   }
 }

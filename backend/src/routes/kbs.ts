@@ -6,6 +6,9 @@ import { authMiddleware } from '../middleware/auth';
 import { guardSchool, guardClassMember, guardClassTeacher, getClassSchool } from '../middleware/guards';
 import { resolvePath, saveFile } from '../lib/storage';
 import { CustomError } from '../types';
+import { enqueueIndexTask } from '../lib/index-queue';
+import { deleteDocumentChunks, queryChunks } from '../lib/chroma';
+import { embedSingle } from '../lib/embed';
 
 export const kbsRouter = Router();
 
@@ -114,15 +117,17 @@ kbsRouter.post(
 
       const mimeMap: Record<string, string> = { '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown' };
       db.prepare(
-        `INSERT INTO kb_documents (id, kb_id, original_name, stored_path, mime, chunk_count, uploaded_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO kb_documents (id, kb_id, original_name, stored_path, mime, chunk_count, uploaded_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'uploaded')`
       ).run(docId, kbId, req.file.originalname, fullPath, mimeMap[ext], 0, Date.now());
 
       res.status(201).json({
         documentId: docId,
         originalName: req.file.originalname,
-        chunks: 0,
+        chunkCount: 0,
         status: 'uploaded',
+        indexedAt: null,
+        errorMessage: null,
       });
     });
   }
@@ -142,7 +147,8 @@ kbsRouter.get(
 
     const docs = db
       .prepare(
-        `SELECT id as documentId, original_name as originalName, chunk_count as chunkCount, uploaded_at as uploadedAt
+        `SELECT id as documentId, original_name as originalName, chunk_count as chunkCount,
+                uploaded_at as uploadedAt, status, indexed_at as indexedAt, error_message as errorMessage
          FROM kb_documents WHERE kb_id = ? ORDER BY uploaded_at DESC`
       )
       .all(kbId);
@@ -151,14 +157,165 @@ kbsRouter.get(
 );
 
 kbsRouter.post(
-  '/:classId/kbs/:kbId/query',
+  '/:classId/kbs/:kbId/documents/:docId/index',
   authMiddleware,
   guardSchool,
   guardClassMember,
+  guardClassTeacher,
   (req: Request, res: Response) => {
-    res.status(501).json({
-      error: 'NOT_IMPLEMENTED',
-      message: 'Vector query is not implemented in MVP. Reserved for future iteration.',
+    const { classId, kbId, docId } = req.params;
+
+    const doc = db
+      .prepare(
+        `SELECT d.*, k.class_id, c.school
+         FROM kb_documents d
+         JOIN knowledge_bases k ON k.id = d.kb_id
+         JOIN classes c ON c.id = k.class_id
+         WHERE d.id = ? AND d.kb_id = ? AND k.class_id = ?`
+      )
+      .get(docId, kbId, classId) as any;
+    if (!doc) throw new CustomError('Document not found', 404, 'NOT_FOUND');
+
+    if (doc.status === 'indexing') {
+      throw new CustomError('Document is already indexing', 409, 'INDEXING');
+    }
+
+    const taskId = enqueueIndexTask(docId, kbId, classId, doc.school);
+    db.prepare(`UPDATE kb_documents SET status = 'indexing', error_message = NULL WHERE id = ?`).run(docId);
+
+    res.status(202).json({ taskId, documentId: docId, status: 'indexing' });
+  }
+);
+
+kbsRouter.post(
+  '/:classId/kbs/:kbId/index-all',
+  authMiddleware,
+  guardSchool,
+  guardClassMember,
+  guardClassTeacher,
+  (req: Request, res: Response) => {
+    const { classId, kbId } = req.params;
+
+    const kb = db
+      .prepare(
+        `SELECT k.*, c.school
+         FROM knowledge_bases k
+         JOIN classes c ON c.id = k.class_id
+         WHERE k.id = ? AND k.class_id = ?`
+      )
+      .get(kbId, classId) as any;
+    if (!kb) throw new CustomError('KB not found', 404, 'NOT_FOUND');
+
+    const docs = db
+      .prepare(`SELECT id FROM kb_documents WHERE kb_id = ? AND status != 'ready'`)
+      .all(kbId) as { id: string }[];
+
+    const taskIds: string[] = [];
+    for (const d of docs) {
+      if (d.id === undefined || d.id === null || d.id === '') continue;
+      const taskId = enqueueIndexTask(d.id, kbId, classId, kb.school);
+      taskIds.push(taskId);
+      db.prepare(`UPDATE kb_documents SET status = 'indexing', error_message = NULL WHERE id = ?`).run(d.id);
+    }
+
+    res.status(202).json({ taskIds, enqueued: taskIds.length });
+  }
+);
+
+kbsRouter.delete(
+  '/:classId/kbs/:kbId/documents/:docId',
+  authMiddleware,
+  guardSchool,
+  guardClassMember,
+  guardClassTeacher,
+  (req: Request, res: Response) => {
+    const { classId, kbId, docId } = req.params;
+
+    const doc = db
+      .prepare(
+        `SELECT * FROM kb_documents WHERE id = ? AND kb_id = ? AND kb_id IN (
+          SELECT id FROM knowledge_bases WHERE class_id = ?
+        )`
+      )
+      .get(docId, kbId, classId) as any;
+    if (!doc) throw new CustomError('Document not found', 404, 'NOT_FOUND');
+
+    if (doc.status === 'indexing') {
+      throw new CustomError('Cannot delete document while indexing', 409, 'INDEXING');
+    }
+
+    deleteDocumentChunks(docId).catch(() => {});
+    db.prepare(`DELETE FROM kb_documents WHERE id = ?`).run(docId);
+
+    res.json({ success: true });
+  }
+);
+
+kbsRouter.post(
+  '/:classId/kbs/query',
+  authMiddleware,
+  guardSchool,
+  guardClassMember,
+  async (req: Request, res: Response) => {
+    const classId = req.params.classId;
+    const { kbIds, query, topK } = req.body || {};
+
+    if (!Array.isArray(kbIds) || kbIds.length === 0) {
+      throw new CustomError('kbIds must be a non-empty array', 400, 'BAD_REQUEST');
+    }
+    if (kbIds.length > 20) {
+      throw new CustomError('kbIds must not exceed 20 items', 400, 'BAD_REQUEST');
+    }
+    if (!query || typeof query !== 'string') {
+      throw new CustomError('query must be a non-empty string', 400, 'BAD_REQUEST');
+    }
+
+    const kbRows = db
+      .prepare(`SELECT id FROM knowledge_bases WHERE class_id = ? AND id IN (${kbIds.map(() => '?').join(',')})`)
+      .all(classId, ...kbIds) as { id: string }[];
+    if (kbRows.length !== kbIds.length) {
+      const validIds = new Set(kbRows.map((r) => r.id));
+      const invalid = kbIds.filter((id: string) => !validIds.has(id));
+      throw new CustomError(`Invalid kbIds: ${invalid.join(', ')}`, 400, 'BAD_REQUEST');
+    }
+
+    const effectiveTopK = Math.min(topK ?? 5, 20);
+
+    const queryEmbedding = await embedSingle(query);
+    const results = await queryChunks(queryEmbedding, kbIds, classId, effectiveTopK);
+
+    const docIds = [...new Set(results.map((r) => r.documentId).filter(Boolean))];
+    const docMap = new Map<string, string>();
+    if (docIds.length > 0) {
+      const docRows = db
+        .prepare(
+          `SELECT id as documentId, original_name as originalName FROM kb_documents WHERE id IN (${docIds.map(() => '?').join(',')})`
+        )
+        .all(...docIds) as { documentId: string; originalName: string }[];
+      for (const d of docRows) {
+        docMap.set(d.documentId, d.originalName);
+      }
+    }
+
+    const withOriginals = results.map((r) => ({
+      chunk: r.chunk,
+      distance: r.distance,
+      documentId: r.documentId,
+      originalName: docMap.get(r.documentId) || '',
+      chunkIndex: r.chunkIndex,
+    }));
+
+    res.json(withOriginals);
+  }
+);
+
+kbsRouter.post(
+  '/:classId/kbs/:kbId/query',
+  authMiddleware,
+  (_req: Request, res: Response) => {
+    res.status(410).json({
+      error: 'GONE',
+      message: 'Use POST /api/classes/:classId/kbs/query instead',
     });
   }
 );

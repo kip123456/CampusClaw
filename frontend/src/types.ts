@@ -65,12 +65,22 @@ export interface KBDocument {
   documentId: string;
   originalName: string;
   chunkCount: number;
-  indexedAt: number;
+  uploadedAt: number;
+  status: 'uploaded' | 'indexing' | 'ready' | 'failed';
+  indexedAt: number | null;
+  errorMessage: string | null;
+}
+
+export interface IndexTask {
+  taskId: string;
+  documentId: string;
+  status: 'pending' | 'processing' | 'done' | 'failed';
 }
 
 export interface QueryResult {
   chunk: string;
   distance: number;
   documentId: string;
+  originalName: string;
   chunkIndex: number;
 }

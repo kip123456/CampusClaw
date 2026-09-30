@@ -12,6 +12,7 @@ export default function ClassDetailPage() {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [activeKb, setActiveKb] = useState<string>('');
+  const [selectedKbIds, setSelectedKbIds] = useState<Set<string>>(new Set());
   const [docs, setDocs] = useState<KBDocument[]>([]);
   const [query, setQuery] = useState('');
   const [queryResults, setQueryResults] = useState<QueryResult[]>([]);
@@ -41,6 +42,12 @@ export default function ClassDetailPage() {
   useEffect(() => {
     if (activeKb && tab === 'kbs') loadDocs();
   }, [activeKb]);
+
+  useEffect(() => {
+    if (kbs.length > 0 && selectedKbIds.size === 0) {
+      setSelectedKbIds(new Set(kbs.map((kb) => kb.kbId)));
+    }
+  }, [kbs]);
 
   async function loadMaterials() {
     try {
@@ -96,7 +103,7 @@ export default function ClassDetailPage() {
     fd.append('file', file);
     try {
       await api.post(`/classes/${classId}/kbs/${activeKb}/documents`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setUploadMsg('文档上传并向量化成功');
+      setUploadMsg('文档上传成功');
       setTimeout(() => setUploadMsg(''), 2000);
       loadDocs();
     } catch (err: any) {
@@ -118,14 +125,37 @@ export default function ClassDetailPage() {
     }
   }
 
+  async function handleIndexDoc(docId: string) {
+    try {
+      await api.post(`/classes/${classId}/kbs/${activeKb}/documents/${docId}/index`);
+      setDocs((prev) => prev.map((d) => (d.documentId === docId ? { ...d, status: 'indexing' } : d)));
+      setTimeout(() => loadDocs(), 3000);
+    } catch (err: any) {
+      alert(err.response?.data?.message || '触发索引失败');
+    }
+  }
+
+  async function handleIndexAll() {
+    try {
+      const res = await api.post(`/classes/${classId}/kbs/${activeKb}/index-all`);
+      setUploadMsg(`已入队 ${res.data.enqueued} 个文档`);
+      setTimeout(() => setUploadMsg(''), 2000);
+      setDocs((prev) => prev.map((d) => (d.status !== 'ready' ? { ...d, status: 'indexing' } : d)));
+      setTimeout(() => loadDocs(), 3000);
+    } catch (err: any) {
+      alert(err.response?.data?.message || '批量索引失败');
+    }
+  }
+
   async function handleQuery() {
-    if (!query.trim() || !activeKb) return;
+    if (!query.trim() || selectedKbIds.size === 0) return;
     setLoading(true);
     try {
-      const res = await api.post<QueryResult[]>(`/classes/${classId}/kbs/${activeKb}/query`, { query, topK: 5 });
+      const kbIds = Array.from(selectedKbIds);
+      const res = await api.post<QueryResult[]>(`/classes/${classId}/kbs/query`, { kbIds, query, topK: 5 });
       setQueryResults(res.data);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      alert(err.response?.data?.message || '检索失败');
     } finally {
       setLoading(false);
     }
@@ -175,6 +205,51 @@ export default function ClassDetailPage() {
     }
   }
 
+  function toggleKbSelection(kbId: string) {
+    setSelectedKbIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kbId)) next.delete(kbId);
+      else next.add(kbId);
+      return next;
+    });
+  }
+
+  function selectAllKbs() {
+    setSelectedKbIds(new Set(kbs.map((kb) => kb.kbId)));
+  }
+
+  function invertKbSelection() {
+    setSelectedKbIds((prev) => {
+      const next = new Set<string>();
+      for (const kb of kbs) {
+        if (!prev.has(kb.kbId)) next.add(kb.kbId);
+      }
+      return next;
+    });
+  }
+
+  const statusBadge = (status: KBDocument['status']) => {
+    const map: Record<KBDocument['status'], { label: string; color: string }> = {
+      uploaded: { label: '待索引', color: '#8e8e93' },
+      indexing: { label: '索引中...', color: '#007aff' },
+      ready: { label: '就绪', color: '#34c759' },
+      failed: { label: '失败', color: '#ff3b30' },
+    };
+    const s = map[status];
+    return (
+      <span style={{
+        fontSize: 11,
+        padding: '2px 8px',
+        borderRadius: 10,
+        background: s.color + '22',
+        color: s.color,
+        fontWeight: 500,
+      }}>
+        {s.label}
+      </span>
+    );
+  };
+
   return (
     <div>
       <Link to="/classes" style={{ color: '#007aff', marginBottom: 16, display: 'inline-block' }}>← 返回班级列表</Link>
@@ -185,7 +260,7 @@ export default function ClassDetailPage() {
         <div className={`tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>成员管理</div>
       </div>
 
-      {uploadMsg && <div className={uploadMsg.includes('成功') ? 'success' : 'error'}>{uploadMsg}</div>}
+      {uploadMsg && <div className={uploadMsg.includes('成功') || uploadMsg.includes('已入队') ? 'success' : 'error'}>{uploadMsg}</div>}
 
       {tab === 'materials' && (
         <div>
@@ -217,10 +292,29 @@ export default function ClassDetailPage() {
       {tab === 'kbs' && (
         <div className="grid-2">
           <div className="kb-list">
-            <h4 style={{ marginBottom: 12 }}>知识库列表</h4>
+            <h4 style={{ marginBottom: 12 }}>知识库列表 (检索多选)</h4>
+            {kbs.length > 1 && (
+              <div style={{ marginBottom: 8, fontSize: 12, display: 'flex', gap: 8 }}>
+                <a onClick={selectAllKbs} style={{ color: '#007aff', cursor: 'pointer' }}>全选</a>
+                <span style={{ color: '#c7c7cc' }}>|</span>
+                <a onClick={invertKbSelection} style={{ color: '#007aff', cursor: 'pointer' }}>反选</a>
+              </div>
+            )}
             {kbs.map((kb) => (
-              <div key={kb.kbId} className={`kb-item ${activeKb === kb.kbId ? 'active' : ''}`} onClick={() => setActiveKb(kb.kbId)}>
-                {kb.isDefault && '⭐ '}{kb.name}
+              <div
+                key={kb.kbId}
+                className={`kb-item ${activeKb === kb.kbId ? 'active' : ''}`}
+                onClick={() => setActiveKb(kb.kbId)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedKbIds.has(kb.kbId)}
+                  onChange={() => toggleKbSelection(kb.kbId)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ cursor: 'pointer' }}
+                />
+                <span>{kb.isDefault && '⭐ '}{kb.name}</span>
               </div>
             ))}
             {isTeacherOrAdmin && !showNewKb && (
@@ -241,37 +335,75 @@ export default function ClassDetailPage() {
               <>
                 {isTeacherOrAdmin && (
                   <div className="upload-area">
-                    <p style={{ marginBottom: 12, color: '#6e6e73' }}>上传文档（PDF/TXT/MD）</p>
+                    <p style={{ marginBottom: 12, color: '#6e6e73' }}>上传文档（PDF/TXT/MD）→ 上传后需手动触发索引</p>
                     <input type="file" accept=".pdf,.txt,.md" ref={docInputRef} onChange={handleDocUpload} style={{ display: 'none' }} />
                     <button onClick={() => docInputRef.current?.click()}>选择文件上传</button>
                   </div>
                 )}
                 <div className="card" style={{ marginBottom: 16 }}>
-                  <h4 style={{ marginBottom: 12 }}>知识库文档</h4>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                    <h4 style={{ margin: 0 }}>知识库文档</h4>
+                    {isTeacherOrAdmin && docs.some((d) => d.status !== 'ready') && (
+                      <button onClick={handleIndexAll} style={{ padding: '4px 12px', fontSize: 12 }}>
+                        索引全部待索引 ({docs.filter((d) => d.status !== 'ready').length})
+                      </button>
+                    )}
+                  </div>
                   {docs.length === 0 ? (
                     <div style={{ color: '#8e8e93' }}>暂无文档</div>
                   ) : (
                     docs.map((d) => (
-                      <div key={d.documentId} className="list-item">
-                        <div>📄 {d.originalName}</div>
-                        <div style={{ fontSize: 12, color: '#8e8e93' }}>{d.chunkCount} chunks</div>
+                      <div key={d.documentId} className="list-item" style={{ flexWrap: 'wrap', gap: 4 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 500 }}>📄 {d.originalName}</div>
+                          <div style={{ fontSize: 12, color: '#8e8e93' }}>
+                            {d.chunkCount} chunks
+                            {d.indexedAt ? ` · ${new Date(d.indexedAt).toLocaleString()}` : ''}
+                          </div>
+                          {d.status === 'failed' && d.errorMessage && (
+                            <div style={{ fontSize: 11, color: '#ff3b30', marginTop: 2 }}>{d.errorMessage}</div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {statusBadge(d.status)}
+                          {isTeacherOrAdmin && d.status !== 'indexing' && (
+                            <button onClick={() => handleIndexDoc(d.documentId)} style={{ padding: '2px 10px', fontSize: 11 }}>
+                              {d.status === 'ready' ? '重新索引' : '开始索引'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
                 <div className="card">
-                  <h4 style={{ marginBottom: 12 }}>向量检索</h4>
+                  <h4 style={{ marginBottom: 12 }}>向量检索 {selectedKbIds.size > 0 && <span style={{ fontSize: 12, color: '#8e8e93', fontWeight: 'normal' }}>({selectedKbIds.size} 个知识库)</span>}</h4>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                    <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="输入自然语言查询..." style={{ marginBottom: 0, flex: 1 }} />
-                    <button onClick={handleQuery} disabled={loading || !query.trim()}>{loading ? '搜索中...' : '搜索'}</button>
+                    <input
+                      type="text"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="输入自然语言查询..."
+                      style={{ marginBottom: 0, flex: 1 }}
+                      onKeyDown={(e) => e.key === 'Enter' && handleQuery()}
+                    />
+                    <button onClick={handleQuery} disabled={loading || !query.trim() || selectedKbIds.size === 0}>
+                      {loading ? '搜索中...' : '搜索'}
+                    </button>
                   </div>
+                  {selectedKbIds.size === 0 && (
+                    <div style={{ color: '#ff9500', fontSize: 13, marginBottom: 8 }}>请先选择至少一个知识库进行检索</div>
+                  )}
                   {queryResults.map((r, i) => (
                     <div key={i} className="query-result">
                       <div className="chunk">{r.chunk}</div>
-                      <div className="distance">distance: {r.distance.toFixed(4)}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                        <div style={{ fontSize: 12, color: '#007aff' }}>📄 {r.originalName}</div>
+                        <div className="distance">distance: {r.distance.toFixed(4)}</div>
+                      </div>
                     </div>
                   ))}
-                  {queryResults.length === 0 && query && !loading && (
+                  {queryResults.length === 0 && query && !loading && selectedKbIds.size > 0 && (
                     <div style={{ color: '#8e8e93', fontSize: 13 }}>无匹配结果</div>
                   )}
                 </div>

@@ -4,7 +4,7 @@ import { config } from './config';
 import { CustomError } from './types';
 import { initSchema } from './db/schema';
 import { seed } from './db/seed';
-import { warmupEmbed } from './lib/embed';
+import { startIndexWorker, stopIndexWorker } from './lib/index-worker';
 import { requestLogger } from './middleware/auth';
 
 import { authRouter } from './routes/auth';
@@ -56,9 +56,16 @@ async function main() {
 
   app.listen(config.port, () => {
     console.log(`[SERVER] CampusClaw backend listening on port ${config.port}`);
+    startIndexWorker();
   });
 
-  warmupEmbed().catch(() => {});
+  const shutdown = () => {
+    console.log('[SERVER] Shutting down...');
+    stopIndexWorker();
+    process.exit(0);
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
 main().catch((err) => {
