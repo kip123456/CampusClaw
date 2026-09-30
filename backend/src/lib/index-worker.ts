@@ -24,9 +24,11 @@ async function runLoop(): Promise<void> {
 
     const task = db
       .prepare(
-        `SELECT t.*, d.stored_path, d.mime
+        `SELECT t.*, d.stored_path, d.mime,
+                k.chunk_size AS kb_chunk_size, k.chunk_overlap AS kb_chunk_overlap
          FROM index_tasks t
          JOIN kb_documents d ON d.id = t.document_id
+         LEFT JOIN knowledge_bases k ON k.id = t.kb_id
          WHERE t.id = ?`
       )
       .get(taskId) as any;
@@ -36,21 +38,28 @@ async function runLoop(): Promise<void> {
       continue;
     }
 
-    console.log(`[INDEX] Processing task ${taskId} for doc ${task.document_id}`);
+    const effectiveChunkSize = task.chunk_size ?? task.kb_chunk_size ?? undefined;
+    const effectiveChunkOverlap = task.chunk_overlap ?? task.kb_chunk_overlap ?? undefined;
+
+    console.log(`[INDEX] Processing task ${taskId} for doc ${task.document_id} (chunkSize=${effectiveChunkSize}, overlap=${effectiveChunkOverlap})`);
 
     try {
-      const result = await indexDocument({
-        id: task.document_id,
-        kb_id: task.kb_id,
-        class_id: task.class_id,
-        school: task.school,
-        stored_path: task.stored_path,
-        mime: task.mime,
-      });
+      const result = await indexDocument(
+        {
+          id: task.document_id,
+          kb_id: task.kb_id,
+          class_id: task.class_id,
+          school: task.school,
+          stored_path: task.stored_path,
+          mime: task.mime,
+        },
+        effectiveChunkSize,
+        effectiveChunkOverlap
+      );
 
       db.prepare(
-        `UPDATE kb_documents SET status = 'ready', chunk_count = ?, indexed_at = ? WHERE id = ?`
-      ).run(result.chunkCount, Date.now(), task.document_id);
+        `UPDATE kb_documents SET status = 'ready', chunk_count = ?, indexed_at = ?, chunk_size = ?, chunk_overlap = ? WHERE id = ?`
+      ).run(result.chunkCount, Date.now(), effectiveChunkSize ?? null, effectiveChunkOverlap ?? null, task.document_id);
       markTaskDone(taskId);
       console.log(`[INDEX] Task ${taskId} done (${result.chunkCount} chunks)`);
     } catch (err: any) {

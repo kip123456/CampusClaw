@@ -9,6 +9,7 @@ import { CustomError } from '../types';
 import { enqueueIndexTask } from '../lib/index-queue';
 import { deleteDocumentChunks, queryChunks } from '../lib/chroma';
 import { embedSingle } from '../lib/embed';
+import { validateChunkConfig, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP } from '../lib/chunk';
 
 export const kbsRouter = Router();
 
@@ -25,14 +26,19 @@ kbsRouter.post(
   guardClassTeacher,
   (req: Request, res: Response) => {
     const classId = req.params.classId;
-    const { name } = req.body || {};
+    const { name, chunkSize, chunkOverlap } = req.body || {};
     if (!name) throw new CustomError('Missing required field: name', 400, 'BAD_REQUEST');
+
+    const { chunkSize: cs, chunkOverlap: co } = validateChunkConfig(
+      chunkSize ?? DEFAULT_CHUNK_SIZE,
+      chunkOverlap ?? DEFAULT_OVERLAP
+    );
 
     if (name === '默认知识库') {
       const existing = db
         .prepare('SELECT id FROM knowledge_bases WHERE class_id = ? AND name = ?')
         .get(classId, name) as any;
-      if (existing) return res.status(200).json({ kbId: existing.id, classId, name, isDefault: true });
+      if (existing) return res.status(200).json({ kbId: existing.id, classId, name, isDefault: true, chunkSize: existing.chunk_size ?? cs, chunkOverlap: existing.chunk_overlap ?? co });
     }
 
     const dup = db
@@ -42,9 +48,9 @@ kbsRouter.post(
 
     const kbId = generateId();
     db.prepare(
-      `INSERT INTO knowledge_bases (id, class_id, name, is_default, created_at) VALUES (?, ?, ?, 0, ?)`
-    ).run(kbId, classId, name, Date.now());
-    res.status(201).json({ kbId, classId, name, isDefault: false });
+      `INSERT INTO knowledge_bases (id, class_id, name, is_default, created_at, chunk_size, chunk_overlap) VALUES (?, ?, ?, 0, ?, ?, ?)`
+    ).run(kbId, classId, name, Date.now(), cs, co);
+    res.status(201).json({ kbId, classId, name, isDefault: false, chunkSize: cs, chunkOverlap: co });
   }
 );
 
@@ -57,7 +63,8 @@ kbsRouter.get(
     const classId = req.params.classId;
     const kbs = db
       .prepare(
-        `SELECT id as kbId, class_id as classId, name, is_default as isDefault, created_at as createdAt
+        `SELECT id as kbId, class_id as classId, name, is_default as isDefault, created_at as createdAt,
+                chunk_size as chunkSize, chunk_overlap as chunkOverlap
          FROM knowledge_bases WHERE class_id = ? ORDER BY is_default DESC, created_at ASC`
       )
       .all(classId);
@@ -148,7 +155,8 @@ kbsRouter.get(
     const docs = db
       .prepare(
         `SELECT id as documentId, original_name as originalName, chunk_count as chunkCount,
-                uploaded_at as uploadedAt, status, indexed_at as indexedAt, error_message as errorMessage
+                uploaded_at as uploadedAt, status, indexed_at as indexedAt, error_message as errorMessage,
+                chunk_size as chunkSize, chunk_overlap as chunkOverlap
          FROM kb_documents WHERE kb_id = ? ORDER BY uploaded_at DESC`
       )
       .all(kbId);
@@ -164,6 +172,7 @@ kbsRouter.post(
   guardClassTeacher,
   (req: Request, res: Response) => {
     const { classId, kbId, docId } = req.params;
+    const { chunkSize, chunkOverlap } = req.body || {};
 
     const doc = db
       .prepare(
@@ -180,7 +189,13 @@ kbsRouter.post(
       throw new CustomError('Document is already indexing', 409, 'INDEXING');
     }
 
-    const taskId = enqueueIndexTask(docId, kbId, classId, doc.school);
+    const cs = chunkSize !== undefined ? chunkSize : undefined;
+    const co = chunkOverlap !== undefined ? chunkOverlap : undefined;
+    if (cs !== undefined || co !== undefined) {
+      validateChunkConfig(cs ?? DEFAULT_CHUNK_SIZE, co ?? DEFAULT_OVERLAP);
+    }
+
+    const taskId = enqueueIndexTask(docId, kbId, classId, doc.school, cs, co);
     db.prepare(`UPDATE kb_documents SET status = 'indexing', error_message = NULL WHERE id = ?`).run(docId);
 
     res.status(202).json({ taskId, documentId: docId, status: 'indexing' });

@@ -59,6 +59,8 @@ export interface KnowledgeBase {
   name: string;
   isDefault: boolean;
   createdAt: number;
+  chunkSize: number;
+  chunkOverlap: number;
 }
 
 export interface KBDocument {
@@ -69,6 +71,8 @@ export interface KBDocument {
   status: 'uploaded' | 'indexing' | 'ready' | 'failed';
   indexedAt: number | null;
   errorMessage: string | null;
+  chunkSize: number | null;
+  chunkOverlap: number | null;
 }
 
 export interface IndexTask {

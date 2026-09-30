@@ -47,6 +47,8 @@ export const schemaStatements: string[] = [
     name TEXT NOT NULL,
     is_default INTEGER NOT NULL CHECK(is_default IN (0,1)),
     created_at INTEGER NOT NULL,
+    chunk_size INTEGER NOT NULL DEFAULT 1500,
+    chunk_overlap INTEGER NOT NULL DEFAULT 50,
     UNIQUE(class_id, name)
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_default_unique ON knowledge_bases(class_id) WHERE is_default = 1`,
@@ -60,7 +62,9 @@ export const schemaStatements: string[] = [
     uploaded_at INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'uploaded' CHECK(status IN ('uploaded','indexing','ready','failed')),
     indexed_at INTEGER,
-    error_message TEXT
+    error_message TEXT,
+    chunk_size INTEGER,
+    chunk_overlap INTEGER
   )`,
   `CREATE INDEX IF NOT EXISTS idx_kb_docs_kb ON kb_documents(kb_id)`,
   `CREATE TABLE IF NOT EXISTS index_tasks (
@@ -73,7 +77,9 @@ export const schemaStatements: string[] = [
     error_message TEXT,
     created_at INTEGER NOT NULL,
     started_at INTEGER,
-    finished_at INTEGER
+    finished_at INTEGER,
+    chunk_size INTEGER,
+    chunk_overlap INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS materials (
     id TEXT PRIMARY KEY,
@@ -92,19 +98,51 @@ export function initSchema(): void {
     db.exec(stmt);
   }
 
-  const info = db.prepare('PRAGMA table_info(kb_documents)').all() as { name: string }[];
-  const existingCols = new Set(info.map((c) => c.name));
+  const kbDocInfo = db.prepare('PRAGMA table_info(kb_documents)').all() as { name: string }[];
+  const kbDocCols = new Set(kbDocInfo.map((c) => c.name));
 
-  if (!existingCols.has('status')) {
+  if (!kbDocCols.has('status')) {
     db.exec(`ALTER TABLE kb_documents ADD COLUMN status TEXT NOT NULL DEFAULT 'uploaded' CHECK(status IN ('uploaded','indexing','ready','failed'))`);
     console.log('[DB] Migrated: kb_documents.status column added');
   }
-  if (!existingCols.has('indexed_at')) {
+  if (!kbDocCols.has('indexed_at')) {
     db.exec(`ALTER TABLE kb_documents ADD COLUMN indexed_at INTEGER`);
     console.log('[DB] Migrated: kb_documents.indexed_at column added');
   }
-  if (!existingCols.has('error_message')) {
+  if (!kbDocCols.has('error_message')) {
     db.exec(`ALTER TABLE kb_documents ADD COLUMN error_message TEXT`);
     console.log('[DB] Migrated: kb_documents.error_message column added');
+  }
+  if (!kbDocCols.has('chunk_size')) {
+    db.exec(`ALTER TABLE kb_documents ADD COLUMN chunk_size INTEGER`);
+    console.log('[DB] Migrated: kb_documents.chunk_size column added');
+  }
+  if (!kbDocCols.has('chunk_overlap')) {
+    db.exec(`ALTER TABLE kb_documents ADD COLUMN chunk_overlap INTEGER`);
+    console.log('[DB] Migrated: kb_documents.chunk_overlap column added');
+  }
+
+  const kbInfo = db.prepare('PRAGMA table_info(knowledge_bases)').all() as { name: string }[];
+  const kbCols = new Set(kbInfo.map((c) => c.name));
+
+  if (!kbCols.has('chunk_size')) {
+    db.exec(`ALTER TABLE knowledge_bases ADD COLUMN chunk_size INTEGER NOT NULL DEFAULT 1500`);
+    console.log('[DB] Migrated: knowledge_bases.chunk_size column added');
+  }
+  if (!kbCols.has('chunk_overlap')) {
+    db.exec(`ALTER TABLE knowledge_bases ADD COLUMN chunk_overlap INTEGER NOT NULL DEFAULT 50`);
+    console.log('[DB] Migrated: knowledge_bases.chunk_overlap column added');
+  }
+
+  const taskInfo = db.prepare('PRAGMA table_info(index_tasks)').all() as { name: string }[];
+  const taskCols = new Set(taskInfo.map((c) => c.name));
+
+  if (!taskCols.has('chunk_size')) {
+    db.exec(`ALTER TABLE index_tasks ADD COLUMN chunk_size INTEGER`);
+    console.log('[DB] Migrated: index_tasks.chunk_size column added');
+  }
+  if (!taskCols.has('chunk_overlap')) {
+    db.exec(`ALTER TABLE index_tasks ADD COLUMN chunk_overlap INTEGER`);
+    console.log('[DB] Migrated: index_tasks.chunk_overlap column added');
   }
 }

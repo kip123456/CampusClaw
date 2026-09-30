@@ -16,7 +16,11 @@ export interface IndexResult {
   chunkCount: number;
 }
 
-export async function indexDocument(docRow: DocRow): Promise<IndexResult> {
+export async function indexDocument(
+  docRow: DocRow,
+  chunkSize?: number,
+  chunkOverlap?: number
+): Promise<IndexResult> {
   if (!fs.existsSync(docRow.stored_path)) {
     throw new Error(`File not found: ${docRow.stored_path}`);
   }
@@ -29,7 +33,7 @@ export async function indexDocument(docRow: DocRow): Promise<IndexResult> {
     text = fs.readFileSync(docRow.stored_path, 'utf-8');
   }
 
-  const chunks = chunkText(text);
+  const chunks = chunkText(text, chunkSize, chunkOverlap);
   if (chunks.length === 0) {
     return { chunkCount: 0 };
   }
@@ -45,7 +49,11 @@ export async function indexDocument(docRow: DocRow): Promise<IndexResult> {
   return { chunkCount: chunks.length };
 }
 
-export async function reindexDocument(docRow: DocRow): Promise<IndexResult> {
+export async function reindexDocument(
+  docRow: DocRow,
+  chunkSize?: number,
+  chunkOverlap?: number
+): Promise<IndexResult> {
   await deleteDocumentChunks(docRow.id);
-  return indexDocument(docRow);
+  return indexDocument(docRow, chunkSize, chunkOverlap);
 }

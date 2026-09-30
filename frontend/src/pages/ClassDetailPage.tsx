@@ -22,6 +22,11 @@ export default function ClassDetailPage() {
   const docInputRef = useRef<HTMLInputElement>(null);
   const [newKbName, setNewKbName] = useState('');
   const [showNewKb, setShowNewKb] = useState(false);
+  const [newKbChunkSize, setNewKbChunkSize] = useState(1500);
+  const [newKbChunkOverlap, setNewKbChunkOverlap] = useState(50);
+  const [showChunkOverride, setShowChunkOverride] = useState<Record<string, boolean>>({});
+  const [overrideChunkSize, setOverrideChunkSize] = useState<Record<string, number>>({});
+  const [overrideChunkOverlap, setOverrideChunkOverlap] = useState<Record<string, number>>({});
 
   const [members, setMembers] = useState<MembersResponse>({ teachers: [], students: [] });
   const [memberTab, setMemberTab] = useState<'teachers' | 'students'>('students');
@@ -115,9 +120,15 @@ export default function ClassDetailPage() {
   async function handleCreateKb() {
     if (!newKbName.trim()) return;
     try {
-      const res = await api.post(`/classes/${classId}/kbs`, { name: newKbName.trim() });
+      const res = await api.post(`/classes/${classId}/kbs`, {
+        name: newKbName.trim(),
+        chunkSize: newKbChunkSize,
+        chunkOverlap: newKbChunkOverlap,
+      });
       setActiveKb(res.data.kbId);
       setNewKbName('');
+      setNewKbChunkSize(1500);
+      setNewKbChunkOverlap(50);
       setShowNewKb(false);
       loadKbs();
     } catch (err: any) {
@@ -125,10 +136,14 @@ export default function ClassDetailPage() {
     }
   }
 
-  async function handleIndexDoc(docId: string) {
+  async function handleIndexDoc(docId: string, cs?: number, co?: number) {
     try {
-      await api.post(`/classes/${classId}/kbs/${activeKb}/documents/${docId}/index`);
+      await api.post(`/classes/${classId}/kbs/${activeKb}/documents/${docId}/index`, {
+        chunkSize: cs,
+        chunkOverlap: co,
+      });
       setDocs((prev) => prev.map((d) => (d.documentId === docId ? { ...d, status: 'indexing' } : d)));
+      setShowChunkOverride((prev) => ({ ...prev, [docId]: false }));
       setTimeout(() => loadDocs(), 3000);
     } catch (err: any) {
       alert(err.response?.data?.message || '触发索引失败');
@@ -250,6 +265,8 @@ export default function ClassDetailPage() {
     );
   };
 
+  const currentKb = kbs.find((kb) => kb.kbId === activeKb);
+
   return (
     <div>
       <Link to="/classes" style={{ color: '#007aff', marginBottom: 16, display: 'inline-block' }}>← 返回班级列表</Link>
@@ -323,9 +340,36 @@ export default function ClassDetailPage() {
             {showNewKb && (
               <div style={{ marginTop: 12 }}>
                 <input type="text" value={newKbName} onChange={(e) => setNewKbName(e.target.value)} placeholder="知识库名称" />
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: 11, color: '#8e8e93', marginBottom: 2 }}>Chunk 大小 (100-10000)</label>
+                    <input
+                      type="number"
+                      value={newKbChunkSize}
+                      onChange={(e) => setNewKbChunkSize(Number(e.target.value))}
+                      min={100}
+                      max={10000}
+                      step={100}
+                      style={{ padding: '6px 8px', fontSize: 13 }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: 11, color: '#8e8e93', marginBottom: 2 }}>重叠 (0-1000)</label>
+                    <input
+                      type="number"
+                      value={newKbChunkOverlap}
+                      onChange={(e) => setNewKbChunkOverlap(Number(e.target.value))}
+                      min={0}
+                      max={1000}
+                      step={10}
+                      style={{ padding: '6px 8px', fontSize: 13 }}
+                    />
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: '#8e8e93', marginTop: 4 }}>默认 1500/50，chunkOverlap 必须小于 chunkSize</div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                   <button onClick={handleCreateKb} style={{ flex: 1 }}>确定</button>
-                  <button onClick={() => { setShowNewKb(false); setNewKbName(''); }} style={{ flex: 1, background: '#8e8e93' }}>取消</button>
+                  <button onClick={() => { setShowNewKb(false); setNewKbName(''); setNewKbChunkSize(1500); setNewKbChunkOverlap(50); }} style={{ flex: 1, background: '#8e8e93' }}>取消</button>
                 </div>
               </div>
             )}
@@ -342,7 +386,14 @@ export default function ClassDetailPage() {
                 )}
                 <div className="card" style={{ marginBottom: 16 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <h4 style={{ margin: 0 }}>知识库文档</h4>
+                    <h4 style={{ margin: 0 }}>
+                      知识库文档
+                      {currentKb && (
+                        <span style={{ fontSize: 11, color: '#8e8e93', fontWeight: 'normal', marginLeft: 8 }}>
+                          默认 chunk: {currentKb.chunkSize}/{currentKb.chunkOverlap}
+                        </span>
+                      )}
+                    </h4>
                     {isTeacherOrAdmin && docs.some((d) => d.status !== 'ready') && (
                       <button onClick={handleIndexAll} style={{ padding: '4px 12px', fontSize: 12 }}>
                         索引全部待索引 ({docs.filter((d) => d.status !== 'ready').length})
@@ -352,28 +403,95 @@ export default function ClassDetailPage() {
                   {docs.length === 0 ? (
                     <div style={{ color: '#8e8e93' }}>暂无文档</div>
                   ) : (
-                    docs.map((d) => (
-                      <div key={d.documentId} className="list-item" style={{ flexWrap: 'wrap', gap: 4 }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 500 }}>📄 {d.originalName}</div>
-                          <div style={{ fontSize: 12, color: '#8e8e93' }}>
-                            {d.chunkCount} chunks
-                            {d.indexedAt ? ` · ${new Date(d.indexedAt).toLocaleString()}` : ''}
+                    docs.map((d) => {
+                      const showOverride = !!showChunkOverride[d.documentId];
+                      const initCs = overrideChunkSize[d.documentId] ?? currentKb?.chunkSize ?? 1500;
+                      const initCo = overrideChunkOverlap[d.documentId] ?? currentKb?.chunkOverlap ?? 50;
+                      return (
+                        <div key={d.documentId} className="list-item" style={{ flexWrap: 'wrap', gap: 4 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 500 }}>📄 {d.originalName}</div>
+                            <div style={{ fontSize: 12, color: '#8e8e93' }}>
+                              {d.chunkCount} chunks
+                              {d.chunkSize != null && d.chunkOverlap != null ? ` · ${d.chunkSize}/${d.chunkOverlap}` : ''}
+                              {d.indexedAt ? ` · ${new Date(d.indexedAt).toLocaleString()}` : ''}
+                            </div>
+                            {d.status === 'failed' && d.errorMessage && (
+                              <div style={{ fontSize: 11, color: '#ff3b30', marginTop: 2 }}>{d.errorMessage}</div>
+                            )}
                           </div>
-                          {d.status === 'failed' && d.errorMessage && (
-                            <div style={{ fontSize: 11, color: '#ff3b30', marginTop: 2 }}>{d.errorMessage}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {statusBadge(d.status)}
+                            {isTeacherOrAdmin && d.status !== 'indexing' && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setShowChunkOverride((prev) => ({ ...prev, [d.documentId]: !showOverride }));
+                                    setOverrideChunkSize((prev) => ({ ...prev, [d.documentId]: initCs }));
+                                    setOverrideChunkOverlap((prev) => ({ ...prev, [d.documentId]: initCo }));
+                                  }}
+                                  style={{ padding: '2px 6px', fontSize: 11, background: '#e5e5ea', color: '#007aff' }}
+                                  title="调整 chunk 参数后索引"
+                                >
+                                  ⚙
+                                </button>
+                                <button
+                                  onClick={() => handleIndexDoc(d.documentId)}
+                                  style={{ padding: '2px 10px', fontSize: 11 }}
+                                >
+                                  {d.status === 'ready' ? '重新索引' : '开始索引'}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          {showOverride && (
+                            <div style={{ width: '100%', padding: '8px 12px', background: '#f2f2f7', borderRadius: 8, marginTop: 4 }}>
+                              <div style={{ fontSize: 12, color: '#6e6e73', marginBottom: 6 }}>
+                                覆盖默认 chunk 配置 (留空使用 KB 默认)
+                              </div>
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <div style={{ flex: 1 }}>
+                                  <label style={{ display: 'block', fontSize: 11, color: '#8e8e93', marginBottom: 2 }}>Chunk 大小</label>
+                                  <input
+                                    type="number"
+                                    value={overrideChunkSize[d.documentId] ?? initCs}
+                                    onChange={(e) => setOverrideChunkSize((prev) => ({ ...prev, [d.documentId]: Number(e.target.value) }))}
+                                    min={100}
+                                    max={10000}
+                                    step={100}
+                                    style={{ padding: '4px 6px', fontSize: 12 }}
+                                  />
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <label style={{ display: 'block', fontSize: 11, color: '#8e8e93', marginBottom: 2 }}>重叠</label>
+                                  <input
+                                    type="number"
+                                    value={overrideChunkOverlap[d.documentId] ?? initCo}
+                                    onChange={(e) => setOverrideChunkOverlap((prev) => ({ ...prev, [d.documentId]: Number(e.target.value) }))}
+                                    min={0}
+                                    max={1000}
+                                    step={10}
+                                    style={{ padding: '4px 6px', fontSize: 12 }}
+                                  />
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    handleIndexDoc(
+                                      d.documentId,
+                                      overrideChunkSize[d.documentId],
+                                      overrideChunkOverlap[d.documentId]
+                                    );
+                                  }}
+                                  style={{ padding: '4px 10px', fontSize: 12, alignSelf: 'flex-end' }}
+                                >
+                                  用此配置索引
+                                </button>
+                              </div>
+                            </div>
                           )}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          {statusBadge(d.status)}
-                          {isTeacherOrAdmin && d.status !== 'indexing' && (
-                            <button onClick={() => handleIndexDoc(d.documentId)} style={{ padding: '2px 10px', fontSize: 11 }}>
-                              {d.status === 'ready' ? '重新索引' : '开始索引'}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
                 <div className="card">

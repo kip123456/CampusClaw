@@ -1,12 +1,19 @@
 import { db } from '../db';
 import { generateId } from '../config';
 
-export function enqueueIndexTask(documentId: string, kbId: string, classId: string, school: string): string {
+export function enqueueIndexTask(
+  documentId: string,
+  kbId: string,
+  classId: string,
+  school: string,
+  chunkSize?: number,
+  chunkOverlap?: number
+): string {
   const taskId = generateId();
   db.prepare(
-    `INSERT INTO index_tasks (id, document_id, kb_id, class_id, school, status, created_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?)`
-  ).run(taskId, documentId, kbId, classId, school, Date.now());
+    `INSERT INTO index_tasks (id, document_id, kb_id, class_id, school, status, created_at, chunk_size, chunk_overlap)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+  ).run(taskId, documentId, kbId, classId, school, Date.now(), chunkSize ?? null, chunkOverlap ?? null);
   return taskId;
 }
 
