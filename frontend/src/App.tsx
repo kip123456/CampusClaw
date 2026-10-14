@@ -3,6 +3,7 @@ import LoginPage from './pages/LoginPage';
 import MyClassesPage from './pages/MyClassesPage';
 import ClassDetailPage from './pages/ClassDetailPage';
 import AdminPage from './pages/AdminPage';
+import AgentChatPage from './pages/AgentChatPage';
 import Layout from './components/Layout';
 
 function App() {
@@ -19,6 +20,7 @@ function App() {
         <Route path="/" element={<Navigate to="/classes" replace />} />
         <Route path="/classes" element={<MyClassesPage />} />
         <Route path="/classes/:classId" element={<ClassDetailPage />} />
+        <Route path="/classes/:classId/agents/:agentId/chat" element={<AgentChatPage />} />
         <Route path="/admin" element={<AdminPage />} />
       </Route>
     </Routes>

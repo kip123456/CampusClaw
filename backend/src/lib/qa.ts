@@ -1,6 +1,6 @@
 import { embedSingle } from './embed';
 import { queryChunks } from './chroma';
-import { chat, isLLMConfigured } from './llm';
+import { chat, chatStream, isLLMConfigured } from './llm';
 
 export interface Citation {
   id: number;
@@ -17,15 +17,41 @@ export interface QAResult {
   citations: Citation[];
 }
 
-function buildPrompt(chunks: Citation[], question: string): { system: string; user: string } {
-  const system =
-    '你是一个教学助手，回答教师的问题。\n' +
+export interface BuildRAGPromptOptions {
+  systemPrompt?: string | null;
+  skillPrompts?: { name: string; description?: string; prompt: string }[];
+}
+
+export function buildRAGPrompt(
+  chunks: Citation[],
+  question: string,
+  options?: BuildRAGPromptOptions
+): { system: string; user: string } {
+  const ragConstraints =
     '请仅基于提供的知识库片段回答问题。\n' +
     '如果知识库中没有相关内容，请诚实说明"知识库中没有相关内容"，不要编造答案。\n' +
     '你可以（但不必须）引用知识库中的片段。引用时，请在回答对应的位置用 [N] 标记，N 是片段编号。\n' +
     '每个片段只会以一段文本和它的编号展示，请根据编号引用。';
 
+  let system: string;
+  if (options?.systemPrompt && options.systemPrompt.trim()) {
+    system = options.systemPrompt.trim() + '\n' + ragConstraints;
+  } else {
+    system = '你是一个教学助手，回答教师的问题。\n' + ragConstraints;
+  }
+
   let userBody = '';
+
+  if (options?.skillPrompts && options.skillPrompts.length > 0) {
+    userBody += '## 可用技能\n\n';
+    for (const s of options.skillPrompts) {
+      userBody += `- 【${s.name}】`;
+      if (s.description) userBody += `：${s.description}`;
+      userBody += `\n  Prompt:\n  ${s.prompt}\n\n`;
+    }
+    userBody += '请在回答中灵活运用上述技能。\n\n';
+  }
+
   if (chunks.length === 0) {
     userBody += '## 知识库片段\n\n（知识库中没有检索到相关片段）\n\n';
   } else {
@@ -39,16 +65,12 @@ function buildPrompt(chunks: Citation[], question: string): { system: string; us
   return { system, user: userBody };
 }
 
-export async function answerWithRAG(
+async function retrieveAndCite(
   question: string,
   kbIds: string[],
   classId: string,
-  topK: number = 5
-): Promise<QAResult> {
-  if (!isLLMConfigured()) {
-    throw new Error('LLM API not configured: LLM_BASE_URL or LLM_MODEL missing');
-  }
-
+  topK: number
+): Promise<Citation[]> {
   const queryEmbedding = await embedSingle(question);
   const results = await queryChunks(queryEmbedding, kbIds, classId, topK);
 
@@ -66,7 +88,7 @@ export async function answerWithRAG(
     }
   }
 
-  const citations: Citation[] = results.map((r, i) => ({
+  return results.map((r, i) => ({
     id: i + 1,
     chunk: r.chunk,
     documentId: r.documentId,
@@ -75,12 +97,127 @@ export async function answerWithRAG(
     startOffset: r.startOffset,
     endOffset: r.endOffset,
   }));
+}
 
-  const { system, user } = buildPrompt(citations, question);
+export async function answerWithRAG(
+  question: string,
+  kbIds: string[],
+  classId: string,
+  topK: number = 5
+): Promise<QAResult> {
+  if (!isLLMConfigured()) {
+    throw new Error('LLM API not configured: LLM_BASE_URL or LLM_MODEL missing');
+  }
+
+  const citations = await retrieveAndCite(question, kbIds, classId, topK);
+  const { system, user } = buildRAGPrompt(citations, question);
   const answer = await chat([
     { role: 'system', content: system },
     { role: 'user', content: user },
   ]);
 
   return { answer, citations };
+}
+
+export interface StreamEvent {
+  type: 'message' | 'done' | 'error';
+  content?: string;
+  answer?: string;
+  citations?: Citation[];
+  message?: string;
+}
+
+export interface RAGStreamResult {
+  [Symbol.asyncIterator](): AsyncIterator<StreamEvent>;
+  finalResult: Promise<QAResult>;
+}
+
+interface RAGState {
+  resolveFinal: (v: QAResult) => void;
+  rejectFinal: (e: unknown) => void;
+}
+
+async function* streamRAG(
+  question: string,
+  kbIds: string[],
+  classId: string,
+  topK: number,
+  systemPrompt: string | null | undefined,
+  skillPrompts: { name: string; description?: string; prompt: string }[] | undefined,
+  history: { role: 'user' | 'assistant'; content: string }[] | undefined,
+  signal: AbortSignal | undefined,
+  state: RAGState
+): AsyncGenerator<StreamEvent, void, unknown> {
+  try {
+    const citations = await retrieveAndCite(question, kbIds, classId, topK);
+    const { system, user } = buildRAGPrompt(citations, question, { systemPrompt, skillPrompts });
+
+    const llmMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+      { role: 'system', content: system },
+    ];
+    if (history && history.length > 0) {
+      llmMessages.push(...history);
+    }
+    llmMessages.push({ role: 'user', content: user });
+
+    const stream = chatStream(llmMessages, signal);
+
+    for await (const delta of stream) {
+      yield { type: 'message', content: delta };
+    }
+
+    const full = await stream.fullAnswer;
+    yield { type: 'done', answer: full, citations };
+    state.resolveFinal({ answer: full, citations });
+  } catch (err: any) {
+    yield { type: 'error', message: err?.message || 'Unknown stream error' };
+    state.rejectFinal(err);
+  }
+}
+
+export async function answerWithRAGStream(
+  question: string,
+  kbIds: string[],
+  classId: string,
+  options?: {
+    topK?: number;
+    systemPrompt?: string | null;
+    skillPrompts?: { name: string; description?: string; prompt: string }[];
+    history?: { role: 'user' | 'assistant'; content: string }[];
+    signal?: AbortSignal;
+  }
+): Promise<RAGStreamResult> {
+  if (!isLLMConfigured()) {
+    throw new Error('LLM API not configured: LLM_BASE_URL or LLM_MODEL missing');
+  }
+
+  const state: RAGState = {
+    resolveFinal: () => {},
+    rejectFinal: () => {},
+  };
+
+  const finalPromise = new Promise<QAResult>((res, rej) => {
+    state.resolveFinal = res;
+    state.rejectFinal = rej;
+  });
+
+  const topK = options?.topK ?? 5;
+  const gen = streamRAG(
+    question,
+    kbIds,
+    classId,
+    topK,
+    options?.systemPrompt,
+    options?.skillPrompts,
+    options?.history,
+    options?.signal,
+    state
+  );
+
+  return {
+    [Symbol.asyncIterator]() {
+      return gen;
+    },
+    finalResult: finalPromise,
+  };
 }

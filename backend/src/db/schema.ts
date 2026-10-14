@@ -91,6 +91,52 @@ export const schemaStatements: string[] = [
     uploaded_at INTEGER NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_materials_class ON materials(class_id)`,
+  `CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    class_id TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    description TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE(class_id, name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    class_id TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    system_prompt TEXT,
+    visibility TEXT NOT NULL DEFAULT 'all' CHECK(visibility IN ('all','teachers')),
+    created_at INTEGER NOT NULL,
+    UNIQUE(class_id, name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_kbs (
+    agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
+    kb_id TEXT REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    PRIMARY KEY(agent_id, kb_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_skills (
+    agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
+    skill_id TEXT REFERENCES skills(id) ON DELETE CASCADE,
+    PRIMARY KEY(agent_id, skill_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_conversations (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    last_message_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_agent_convs_agent_user ON agent_conversations(agent_id, user_id)`,
+  `CREATE TABLE IF NOT EXISTS agent_messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES agent_conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+    content TEXT NOT NULL,
+    citations TEXT,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_agent_messages_conv ON agent_messages(conversation_id, created_at)`,
 ];
 
 export function initSchema(): void {
@@ -145,4 +191,13 @@ export function initSchema(): void {
     db.exec(`ALTER TABLE index_tasks ADD COLUMN chunk_overlap INTEGER`);
     console.log('[DB] Migrated: index_tasks.chunk_overlap column added');
   }
+
+  try {
+    const msgInfo = db.prepare('PRAGMA table_info(agent_messages)').all() as { name: string }[];
+    const msgCols = new Set(msgInfo.map((c) => c.name));
+    if (msgInfo.length > 0 && !msgCols.has('citations')) {
+      db.exec(`ALTER TABLE agent_messages ADD COLUMN citations TEXT`);
+      console.log('[DB] Migrated: agent_messages.citations column added');
+    }
+  } catch {}
 }

@@ -105,3 +105,48 @@ export interface QAResponse {
   answer: string;
   citations: Citation[];
 }
+
+export interface Skill {
+  skillId: string;
+  classId: string;
+  name: string;
+  description: string | null;
+  prompt?: string;
+  createdAt: number;
+  createdBy: string;
+}
+
+export interface Agent {
+  agentId: string;
+  classId: string;
+  name: string;
+  description: string | null;
+  systemPrompt?: string | null;
+  visibility: 'all' | 'teachers';
+  createdAt: number;
+  createdBy?: string;
+  kbCount?: number;
+  skillCount?: number;
+  kbs?: { kbId: string; name: string }[];
+  skills?: { skillId: string; name: string }[];
+  kbIds?: string[];
+  skillIds?: string[];
+}
+
+export interface AgentConversation {
+  conversationId: string;
+  agentId: string;
+  userId: string;
+  createdAt: number;
+  lastMessageAt: number;
+  messageCount: number;
+}
+
+export interface AgentMessage {
+  messageId: string;
+  conversationId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: number;
+  citations: Citation[];
+}

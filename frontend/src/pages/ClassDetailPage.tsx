@@ -1,14 +1,15 @@
 import { useEffect, useState, useRef } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api';
-import type { Material, KnowledgeBase, KBDocument, QueryResult, User, MembersResponse, Citation, QAResponse } from '../types';
+import type { Material, KnowledgeBase, KBDocument, QueryResult, User, MembersResponse, Citation, QAResponse, Skill, Agent } from '../types';
 
 export default function ClassDetailPage() {
   const { classId } = useParams<{ classId: string }>();
+  const navigate = useNavigate();
   const userStr = localStorage.getItem('user');
   const user: User | null = userStr ? JSON.parse(userStr) : null;
 
-  const [tab, setTab] = useState<'materials' | 'kbs' | 'members'>('materials');
+  const [tab, setTab] = useState<'materials' | 'kbs' | 'members' | 'skills' | 'agents'>('materials');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [activeKb, setActiveKb] = useState<string>('');
@@ -43,12 +44,34 @@ export default function ClassDetailPage() {
   const [addStudentId, setAddStudentId] = useState('');
   const [addMsg, setAddMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [showNewSkill, setShowNewSkill] = useState(false);
+  const [newSkillName, setNewSkillName] = useState('');
+  const [newSkillDesc, setNewSkillDesc] = useState('');
+  const [newSkillPrompt, setNewSkillPrompt] = useState('');
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
+
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [showNewAgent, setShowNewAgent] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [newAgentName, setNewAgentName] = useState('');
+  const [newAgentDesc, setNewAgentDesc] = useState('');
+  const [newAgentSystemPrompt, setNewAgentSystemPrompt] = useState('');
+  const [newAgentVisibility, setNewAgentVisibility] = useState<'all' | 'teachers'>('all');
+  const [newAgentKbIds, setNewAgentKbIds] = useState<Set<string>>(new Set());
+  const [newAgentSkillIds, setNewAgentSkillIds] = useState<Set<string>>(new Set());
+
   const isTeacherOrAdmin = user && (user.role === 'teacher' || user.role === 'admin');
 
   useEffect(() => {
     if (tab === 'materials') loadMaterials();
     if (tab === 'kbs') loadKbs();
     if (tab === 'members') loadMembers();
+    if (tab === 'skills') loadSkills();
+    if (tab === 'agents') {
+      loadAgents();
+      if (isTeacherOrAdmin) { loadKbs(); loadSkills(); }
+    }
   }, [tab, classId]);
 
   useEffect(() => {
@@ -264,6 +287,149 @@ export default function ClassDetailPage() {
     }
   }
 
+  async function loadSkills() {
+    try {
+      const res = await api.get<Skill[]>(`/classes/${classId}/skills`);
+      setSkills(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleCreateSkill() {
+    if (!newSkillName.trim()) return;
+    try {
+      await api.post(`/classes/${classId}/skills`, {
+        name: newSkillName.trim(),
+        description: newSkillDesc.trim() || null,
+        prompt: newSkillPrompt.trim(),
+      });
+      setNewSkillName('');
+      setNewSkillDesc('');
+      setNewSkillPrompt('');
+      setShowNewSkill(false);
+      loadSkills();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '创建技能失败');
+    }
+  }
+
+  async function handleUpdateSkill() {
+    if (!editingSkill || !newSkillName.trim()) return;
+    try {
+      await api.put(`/classes/${classId}/skills/${editingSkill.skillId}`, {
+        name: newSkillName.trim(),
+        description: newSkillDesc.trim() || null,
+        prompt: newSkillPrompt.trim(),
+      });
+      setEditingSkill(null);
+      setNewSkillName('');
+      setNewSkillDesc('');
+      setNewSkillPrompt('');
+      loadSkills();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '更新技能失败');
+    }
+  }
+
+  async function handleDeleteSkill(skillId: string) {
+    if (!confirm('确定删除此技能吗？')) return;
+    try {
+      await api.delete(`/classes/${classId}/skills/${skillId}`);
+      loadSkills();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '删除失败');
+    }
+  }
+
+  function startEditSkill(skill: Skill) {
+    setEditingSkill(skill);
+    setNewSkillName(skill.name);
+    setNewSkillDesc(skill.description || '');
+    setNewSkillPrompt(skill.prompt || '');
+    setShowNewSkill(true);
+  }
+
+  async function loadAgents() {
+    try {
+      const res = await api.get<Agent[]>(`/classes/${classId}/agents`);
+      setAgents(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleCreateOrUpdateAgent() {
+    if (!newAgentName.trim()) return;
+    const payload = {
+      name: newAgentName.trim(),
+      description: newAgentDesc.trim() || null,
+      systemPrompt: newAgentSystemPrompt.trim() || null,
+      visibility: newAgentVisibility,
+      kbIds: Array.from(newAgentKbIds),
+      skillIds: Array.from(newAgentSkillIds),
+    };
+    try {
+      if (editingAgent) {
+        await api.put(`/classes/${classId}/agents/${editingAgent.agentId}`, payload);
+      } else {
+        await api.post(`/classes/${classId}/agents`, payload);
+      }
+      setEditingAgent(null);
+      setShowNewAgent(false);
+      resetAgentForm();
+      loadAgents();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '保存智能体失败');
+    }
+  }
+
+  async function handleDeleteAgent(agentId: string) {
+    if (!confirm('确定删除此智能体吗？相关的对话和消息也会被删除。')) return;
+    try {
+      await api.delete(`/classes/${classId}/agents/${agentId}`);
+      loadAgents();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '删除失败');
+    }
+  }
+
+  function startEditAgent(agent: Agent) {
+    setEditingAgent(agent);
+    setNewAgentName(agent.name);
+    setNewAgentDesc(agent.description || '');
+    setNewAgentSystemPrompt(agent.systemPrompt || '');
+    setNewAgentVisibility(agent.visibility);
+    setNewAgentKbIds(new Set(agent.kbs.map((k) => k.kbId)));
+    setNewAgentSkillIds(new Set(agent.skills.map((s) => s.skillId)));
+    setShowNewAgent(true);
+  }
+
+  function resetAgentForm() {
+    setNewAgentName('');
+    setNewAgentDesc('');
+    setNewAgentSystemPrompt('');
+    setNewAgentVisibility('all');
+    setNewAgentKbIds(new Set());
+    setNewAgentSkillIds(new Set());
+  }
+
+  function toggleAgentKb(kbId: string) {
+    setNewAgentKbIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(kbId)) next.delete(kbId); else next.add(kbId);
+      return next;
+    });
+  }
+
+  function toggleAgentSkill(skillId: string) {
+    setNewAgentSkillIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(skillId)) next.delete(skillId); else next.add(skillId);
+      return next;
+    });
+  }
+
   async function handleAddMember(role: 'student' | 'teacher') {
     if (!addSchool.trim() || !addStudentId.trim()) return;
     setAddMsg(null);
@@ -339,6 +505,12 @@ export default function ClassDetailPage() {
       <div className="tabs">
         <div className={`tab ${tab === 'materials' ? 'active' : ''}`} onClick={() => setTab('materials')}>教学资料</div>
         <div className={`tab ${tab === 'kbs' ? 'active' : ''}`} onClick={() => setTab('kbs')}>知识库</div>
+        <div className={`tab ${tab === 'agents' ? 'active' : ''}`} onClick={() => setTab('agents')}>智能体</div>
+        {isTeacherOrAdmin && (
+          <>
+            <div className={`tab ${tab === 'skills' ? 'active' : ''}`} onClick={() => setTab('skills')}>技能</div>
+          </>
+        )}
         <div className={`tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>成员管理</div>
       </div>
 
@@ -821,6 +993,284 @@ export default function ClassDetailPage() {
               ))
             )}
           </div>
+        </div>
+      )}
+
+      {tab === 'skills' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h4 style={{ margin: 0 }}>技能列表</h4>
+            {isTeacherOrAdmin && !showNewSkill && (
+              <button onClick={() => setShowNewSkill(true)}>+ 新建技能</button>
+            )}
+          </div>
+
+          {showNewSkill && isTeacherOrAdmin && (
+            <div className="card">
+              <h4 style={{ marginTop: 0 }}>{editingSkill ? '编辑技能' : '新建技能'}</h4>
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>名称 *</label>
+              <input
+                type="text"
+                value={newSkillName}
+                onChange={(e) => setNewSkillName(e.target.value)}
+                placeholder="例如：考试出题"
+              />
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>描述</label>
+              <input
+                type="text"
+                value={newSkillDesc}
+                onChange={(e) => setNewSkillDesc(e.target.value)}
+                placeholder="简短描述这个技能的用途"
+              />
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>
+                Prompt（技能提示词，将注入到智能体回答中）
+              </label>
+              <textarea
+                value={newSkillPrompt}
+                onChange={(e) => setNewSkillPrompt(e.target.value)}
+                rows={5}
+                style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d1d6', borderRadius: 8, fontSize: 14, marginBottom: 12, resize: 'vertical', fontFamily: 'inherit' }}
+                placeholder="当需要此技能时，指导智能体如何回答..."
+              />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={editingSkill ? handleUpdateSkill : handleCreateSkill} disabled={!newSkillName.trim()}>
+                  {editingSkill ? '保存修改' : '创建'}
+                </button>
+                <button
+                  style={{ background: '#8e8e93' }}
+                  onClick={() => {
+                    setShowNewSkill(false);
+                    setEditingSkill(null);
+                    setNewSkillName('');
+                    setNewSkillDesc('');
+                    setNewSkillPrompt('');
+                  }}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="card" style={{ padding: 0 }}>
+            {skills.length === 0 ? (
+              <div style={{ padding: 20, color: '#8e8e93', textAlign: 'center' }}>
+                暂无技能 — 技能是可复用的提示词模板，可被智能体绑定使用
+              </div>
+            ) : (
+              skills.map((s) => (
+                <div key={s.skillId} className="list-item" style={{ flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 500 }}>⚡ {s.name}</div>
+                    {s.description && (
+                      <div style={{ fontSize: 12, color: '#6e6e73', marginTop: 2 }}>{s.description}</div>
+                    )}
+                    {s.prompt && isTeacherOrAdmin && (
+                      <div style={{ fontSize: 12, color: '#8e8e93', marginTop: 4, background: '#f2f2f7', padding: 8, borderRadius: 6, whiteSpace: 'pre-wrap' }}>
+                        {s.prompt.length > 200 ? s.prompt.slice(0, 200) + '...' : s.prompt}
+                      </div>
+                    )}
+                  </div>
+                  {isTeacherOrAdmin && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={() => startEditSkill(s)}
+                        style={{ padding: '4px 12px', fontSize: 12, background: '#ff9500' }}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleDeleteSkill(s.skillId)}
+                        style={{ padding: '4px 12px', fontSize: 12, background: '#ff3b30' }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'agents' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h4 style={{ margin: 0 }}>智能体列表</h4>
+            {isTeacherOrAdmin && !showNewAgent && (
+              <button onClick={() => setShowNewAgent(true)}>+ 新建智能体</button>
+            )}
+          </div>
+
+          {showNewAgent && isTeacherOrAdmin && (
+            <div className="card">
+              <h4 style={{ marginTop: 0 }}>{editingAgent ? '编辑智能体' : '新建智能体'}</h4>
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>名称 *</label>
+              <input
+                type="text"
+                value={newAgentName}
+                onChange={(e) => setNewAgentName(e.target.value)}
+                placeholder="例如：课程助教"
+              />
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>描述</label>
+              <input
+                type="text"
+                value={newAgentDesc}
+                onChange={(e) => setNewAgentDesc(e.target.value)}
+                placeholder="简短描述这个智能体的用途"
+              />
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>系统提示词</label>
+              <textarea
+                value={newAgentSystemPrompt}
+                onChange={(e) => setNewAgentSystemPrompt(e.target.value)}
+                rows={3}
+                style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d1d6', borderRadius: 8, fontSize: 14, marginBottom: 12, resize: 'vertical', fontFamily: 'inherit' }}
+                placeholder="定义智能体的角色和行为方式..."
+              />
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>可见性</label>
+              <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                <label style={{ fontSize: 14, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="all"
+                    checked={newAgentVisibility === 'all'}
+                    onChange={() => setNewAgentVisibility('all')}
+                    style={{ width: 'auto', marginRight: 4 }}
+                  />
+                  所有成员可用
+                </label>
+                <label style={{ fontSize: 14, cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="teachers"
+                    checked={newAgentVisibility === 'teachers'}
+                    onChange={() => setNewAgentVisibility('teachers')}
+                    style={{ width: 'auto', marginRight: 4 }}
+                  />
+                  仅教师可用
+                </label>
+              </div>
+
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>绑定知识库</label>
+              {kbs.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#8e8e93', marginBottom: 8 }}>暂无知识库，请先创建</div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                  {kbs.map((kb) => (
+                    <label
+                      key={kb.kbId}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 14,
+                        border: `1px solid ${newAgentKbIds.has(kb.kbId) ? '#007aff' : '#d1d1d6'}`,
+                        background: newAgentKbIds.has(kb.kbId) ? '#007aff22' : '#fff',
+                        color: newAgentKbIds.has(kb.kbId) ? '#007aff' : '#6e6e73',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newAgentKbIds.has(kb.kbId)}
+                        onChange={() => toggleAgentKb(kb.kbId)}
+                        style={{ display: 'none' }}
+                      />
+                      📚 {kb.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>绑定技能</label>
+              {skills.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#8e8e93', marginBottom: 12 }}>暂无技能，可先在"技能"标签页创建</div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                  {skills.map((s) => (
+                    <label
+                      key={s.skillId}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 14,
+                        border: `1px solid ${newAgentSkillIds.has(s.skillId) ? '#ff9500' : '#d1d1d6'}`,
+                        background: newAgentSkillIds.has(s.skillId) ? '#ff950022' : '#fff',
+                        color: newAgentSkillIds.has(s.skillId) ? '#ff9500' : '#6e6e73',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newAgentSkillIds.has(s.skillId)}
+                        onChange={() => toggleAgentSkill(s.skillId)}
+                        style={{ display: 'none' }}
+                      />
+                      ⚡ {s.name}
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button onClick={handleCreateOrUpdateAgent} disabled={!newAgentName.trim()}>
+                  {editingAgent ? '保存修改' : '创建智能体'}
+                </button>
+                <button
+                  style={{ background: '#8e8e93' }}
+                  onClick={() => {
+                    setShowNewAgent(false);
+                    setEditingAgent(null);
+                    resetAgentForm();
+                  }}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+
+          {agents.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', color: '#8e8e93' }}>
+              暂无智能体 — 智能体可以结合知识库和技能进行问答
+            </div>
+          ) : (
+            agents.map((a) => (
+              <div key={a.agentId} className="agent-card" onClick={() => navigate(`/classes/${classId}/agents/${a.agentId}/chat`)}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>🤖 {a.name}</div>
+                    {a.description && (
+                      <div style={{ fontSize: 13, color: '#6e6e73', marginBottom: 8 }}>{a.description}</div>
+                    )}
+                    <div>
+                      <span className="tag visibility">{a.visibility === 'all' ? '所有人可见' : '仅教师'}</span>
+                      {a.kbCount ? <span className="tag kb">📚 {a.kbCount} 个知识库</span> : null}
+                      {a.skillCount ? <span className="tag skill">⚡ {a.skillCount} 个技能</span> : null}
+                    </div>
+                  </div>
+                  {isTeacherOrAdmin && (
+                    <div style={{ display: 'flex', gap: 8, marginLeft: 12 }} onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => startEditAgent(a)}
+                        style={{ padding: '4px 12px', fontSize: 12, background: '#ff9500' }}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleDeleteAgent(a.agentId)}
+                        style={{ padding: '4px 12px', fontSize: 12, background: '#ff3b30' }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>

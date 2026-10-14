@@ -12,6 +12,9 @@ import { adminRouter } from './routes/admin';
 import { classesRouter } from './routes/classes';
 import { materialsRouter } from './routes/materials';
 import { kbsRouter } from './routes/kbs';
+import { skillsRouter } from './routes/skills';
+import { agentsRouter } from './routes/agents';
+import { agentMessagesRouter } from './routes/agentMessages';
 
 const app = express();
 
@@ -28,6 +31,9 @@ app.use('/api/admin', adminRouter);
 app.use('/api/classes', classesRouter);
 app.use('/api/classes', materialsRouter);
 app.use('/api/classes', kbsRouter);
+app.use('/api/classes', skillsRouter);
+app.use('/api/classes', agentsRouter);
+app.use('/api/classes', agentMessagesRouter);
 
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'NOT_FOUND', message: 'Route not found' });
