@@ -1,5 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import swaggerUi from 'swagger-ui-express';
+import { openApiDocument, swaggerUiOptions } from './lib/openapi';
 import { config } from './config';
 import { CustomError } from './types';
 import { initSchema } from './db/schema';
@@ -21,6 +23,12 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(requestLogger);
+
+app.get('/openapi.json', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json(openApiDocument);
+});
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiDocument, swaggerUiOptions));
 
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', time: Date.now() });
