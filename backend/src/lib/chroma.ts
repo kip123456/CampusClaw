@@ -65,6 +65,8 @@ export async function queryChunks(
   classId: string,
   topK: number = 5
 ): Promise<QueryResult[]> {
+  if (kbIds.length === 0) return [];
+
   const collection = await getOrCreateCollection();
   const kbIdCondition =
     kbIds.length === 1 ? { kbId: kbIds[0] } : { kbId: { $in: kbIds } };

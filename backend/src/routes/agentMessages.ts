@@ -6,6 +6,7 @@ import { guardSchool, guardClassMember } from '../middleware/guards';
 import { CustomError } from '../types';
 import { answerWithRAGStream } from '../lib/qa';
 import { isLLMConfigured } from '../lib/llm';
+import { wrap } from '../lib/async';
 
 export const agentMessagesRouter = Router();
 
@@ -14,7 +15,7 @@ agentMessagesRouter.post(
   authMiddleware,
   guardSchool,
   guardClassMember,
-  async (req: Request, res: Response) => {
+  wrap(async (req: Request, res: Response) => {
     if (!isLLMConfigured()) {
       return res.status(503).json({
         error: 'SERVICE_UNAVAILABLE',
@@ -140,7 +141,7 @@ agentMessagesRouter.post(
       }
       cleanupAgent.removeAllListeners();
     }
-  }
+  })
 );
 
 agentMessagesRouter.get(

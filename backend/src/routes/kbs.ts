@@ -12,6 +12,7 @@ import { embedSingle } from '../lib/embed';
 import { validateChunkConfig, DEFAULT_CHUNK_SIZE, DEFAULT_OVERLAP } from '../lib/chunk';
 import { answerWithRAG } from '../lib/qa';
 import { isLLMConfigured } from '../lib/llm';
+import { wrap } from '../lib/async';
 
 export const kbsRouter = Router();
 
@@ -273,7 +274,7 @@ kbsRouter.post(
   authMiddleware,
   guardSchool,
   guardClassMember,
-  async (req: Request, res: Response) => {
+  wrap(async (req: Request, res: Response) => {
     const classId = req.params.classId;
     const { kbIds, query, topK } = req.body || {};
 
@@ -325,7 +326,7 @@ kbsRouter.post(
     }));
 
     res.json(withOriginals);
-  }
+  })
 );
 
 kbsRouter.post(
@@ -334,7 +335,7 @@ kbsRouter.post(
   guardSchool,
   guardClassMember,
   guardClassTeacher,
-  async (req: Request, res: Response) => {
+  wrap(async (req: Request, res: Response) => {
     if (!isLLMConfigured()) {
       return res.status(503).json({
         error: 'SERVICE_UNAVAILABLE',
@@ -375,7 +376,7 @@ kbsRouter.post(
       }
       throw err;
     }
-  }
+  })
 );
 
 kbsRouter.post(

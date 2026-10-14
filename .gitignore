@@ -47,3 +47,9 @@ coverage/
 # Logs
 logs/
 *.log
+
+# API test reports & cache
+apitest/reports/
+apitest/.pytest_cache/
+__pycache__/
+*.pyc
