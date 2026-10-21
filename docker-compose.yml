@@ -33,6 +33,14 @@ services:
       - "${FRONTEND_PORT:-8080}:80"
     restart: unless-stopped
 
+  mcp-server:
+    build:
+      context: ./mcp-server
+    environment:
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN}
+      PORT: 8090
+    restart: unless-stopped
+
 volumes:
   campusclaw-data:
   chromadb-data:
