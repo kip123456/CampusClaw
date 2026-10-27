@@ -59,6 +59,7 @@ export default function ClassDetailPage() {
   const [showNewMcp, setShowNewMcp] = useState(false);
   const [newMcpName, setNewMcpName] = useState('');
   const [newMcpUrl, setNewMcpUrl] = useState('');
+  const [newMcpTransport, setNewMcpTransport] = useState<'http' | 'sse'>('http');
   const [newMcpAuthType, setNewMcpAuthType] = useState<'none' | 'bearer' | 'api_key' | 'basic'>('none');
   const [newMcpAuthConfig, setNewMcpAuthConfig] = useState('');
 
@@ -450,11 +451,13 @@ export default function ClassDetailPage() {
       await api.post(`/classes/${classId}/mcp-servers`, {
         name: newMcpName.trim(),
         url: newMcpUrl.trim(),
+        transport: newMcpTransport,
         authType: newMcpAuthType,
         authConfig,
       });
       setNewMcpName('');
       setNewMcpUrl('');
+      setNewMcpTransport('http');
       setNewMcpAuthType('none');
       setNewMcpAuthConfig('');
       setShowNewMcp(false);
@@ -1611,6 +1614,11 @@ export default function ClassDetailPage() {
                 onChange={(e) => setNewMcpUrl(e.target.value)}
                 placeholder="https://your-mcp-server.com/mcp"
               />
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>传输协议</label>
+              <select value={newMcpTransport} onChange={(e) => setNewMcpTransport(e.target.value as any)}>
+                <option value="http">HTTP (Streamable Transport)</option>
+                <option value="sse">SSE (Server-Sent Events)</option>
+              </select>
               <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>认证方式</label>
               <select value={newMcpAuthType} onChange={(e) => setNewMcpAuthType(e.target.value as any)}>
                 <option value="none">无认证</option>
@@ -1634,7 +1642,7 @@ export default function ClassDetailPage() {
                 <button onClick={handleCreateMcp} disabled={!newMcpName.trim() || !newMcpUrl.trim()}>
                   注册
                 </button>
-                <button style={{ background: '#8e8e93' }} onClick={() => { setShowNewMcp(false); setNewMcpName(''); setNewMcpUrl(''); setNewMcpAuthType('none'); setNewMcpAuthConfig(''); }}>
+                <button style={{ background: '#8e8e93' }} onClick={() => { setShowNewMcp(false); setNewMcpName(''); setNewMcpUrl(''); setNewMcpTransport('http'); setNewMcpAuthType('none'); setNewMcpAuthConfig(''); }}>
                   取消
                 </button>
               </div>
@@ -1663,6 +1671,17 @@ export default function ClassDetailPage() {
                         }}
                       >
                         {m.status === 'connected' ? '● 已连接' : m.status === 'error' ? '● 错误' : '○ 未测试'}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          padding: '1px 6px',
+                          borderRadius: 8,
+                          background: m.transport === 'sse' ? '#af52de22' : '#007aff22',
+                          color: m.transport === 'sse' ? '#af52de' : '#007aff',
+                        }}
+                      >
+                        {m.transport?.toUpperCase() || 'HTTP'}
                       </span>
                       <span style={{ fontSize: 11, color: '#8e8e93' }}>auth: {m.authType}</span>
                       {m.lastError && (

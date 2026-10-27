@@ -147,7 +147,7 @@ export const schemaStatements: string[] = [
     class_id TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     url TEXT NOT NULL,
-    transport TEXT NOT NULL DEFAULT 'http',
+    transport TEXT NOT NULL DEFAULT 'http' CHECK(transport IN ('http','sse')),
     auth_type TEXT NOT NULL DEFAULT 'none' CHECK(auth_type IN ('none','bearer','api_key','basic')),
     auth_config_json TEXT DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'untested' CHECK(status IN ('untested','connected','error')),
@@ -260,5 +260,14 @@ export function initSchema(): void {
   if (!skillCols.has('triggers_json')) {
     db.exec(`ALTER TABLE skills ADD COLUMN triggers_json TEXT DEFAULT '[]'`);
     console.log('[DB] Migrated: skills.triggers_json column added');
+  }
+
+  const mcpInfo = db.prepare('PRAGMA table_info(mcp_servers)').all() as { name: string }[];
+  if (mcpInfo.length > 0) {
+    const mcpCols = new Set(mcpInfo.map((c) => c.name));
+    if (!mcpCols.has('transport')) {
+      db.exec(`ALTER TABLE mcp_servers ADD COLUMN transport TEXT NOT NULL DEFAULT 'http'`);
+      console.log('[DB] Migrated: mcp_servers.transport column added');
+    }
   }
 }

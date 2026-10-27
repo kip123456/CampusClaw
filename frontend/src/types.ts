@@ -139,7 +139,7 @@ export interface McpServer {
   classId: string;
   name: string;
   url: string;
-  transport: string;
+  transport: 'http' | 'sse';
   authType: 'none' | 'bearer' | 'api_key' | 'basic';
   status: 'untested' | 'connected' | 'error';
   lastError?: string | null;

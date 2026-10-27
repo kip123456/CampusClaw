@@ -17,13 +17,17 @@ mcpServersRouter.post(
   guardClassTeacher,
   (req: Request, res: Response) => {
     const classId = req.params.classId;
-    const { name, url, authType, authConfig } = req.body || {};
+    const { name, url, transport, authType, authConfig } = req.body || {};
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       throw new CustomError('Missing required field: name', 400, 'BAD_REQUEST');
     }
     if (!url || typeof url !== 'string' || !url.startsWith('http')) {
       throw new CustomError('Missing or invalid url (must start with http)', 400, 'BAD_REQUEST');
+    }
+    const validTransport = ['http', 'sse'];
+    if (transport && !validTransport.includes(transport)) {
+      throw new CustomError(`transport must be 'http' or 'sse'`, 400, 'BAD_REQUEST');
     }
     const validAuthTypes = ['none', 'bearer', 'api_key', 'basic'];
     if (authType && !validAuthTypes.includes(authType)) {
@@ -34,6 +38,7 @@ mcpServersRouter.post(
     if (dup) throw new CustomError('MCP server name already exists in this class', 409, 'CONFLICT');
 
     const serverId = generateId();
+    const transportFinal = (transport || 'http').toLowerCase();
     const authTypeFinal = authType || 'none';
     let encryptedAuth = '{}';
     if (authConfig && typeof authConfig === 'object' && Object.keys(authConfig).length > 0) {
@@ -41,8 +46,8 @@ mcpServersRouter.post(
     }
 
     db.prepare(
-      `INSERT INTO mcp_servers (id, class_id, name, url, transport, auth_type, auth_config_json, status, created_at) VALUES (?, ?, ?, ?, 'http', ?, ?, 'untested', ?)`
-    ).run(serverId, classId, name.trim(), url, authTypeFinal, encryptedAuth, Date.now());
+      `INSERT INTO mcp_servers (id, class_id, name, url, transport, auth_type, auth_config_json, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'untested', ?)`
+    ).run(serverId, classId, name.trim(), url, transportFinal, authTypeFinal, encryptedAuth, Date.now());
 
     const row = db
       .prepare(
