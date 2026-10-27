@@ -65,7 +65,7 @@ export function buildRAGPrompt(
   return { system, user: userBody };
 }
 
-async function retrieveAndCite(
+export async function retrieveAndCite(
   question: string,
   kbIds: string[],
   classId: string,
@@ -111,113 +111,10 @@ export async function answerWithRAG(
 
   const citations = await retrieveAndCite(question, kbIds, classId, topK);
   const { system, user } = buildRAGPrompt(citations, question);
-  const answer = await chat([
+  const answer = (await chat([
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ]);
+  ])).content || '';
 
   return { answer, citations };
-}
-
-export interface StreamEvent {
-  type: 'message' | 'done' | 'error';
-  content?: string;
-  answer?: string;
-  citations?: Citation[];
-  message?: string;
-}
-
-export interface RAGStreamResult {
-  [Symbol.asyncIterator](): AsyncIterator<StreamEvent>;
-  finalResult: Promise<QAResult>;
-}
-
-interface RAGState {
-  resolveFinal: (v: QAResult) => void;
-  rejectFinal: (e: unknown) => void;
-}
-
-async function* streamRAG(
-  question: string,
-  kbIds: string[],
-  classId: string,
-  topK: number,
-  systemPrompt: string | null | undefined,
-  skillPrompts: { name: string; description?: string; prompt: string }[] | undefined,
-  history: { role: 'user' | 'assistant'; content: string }[] | undefined,
-  signal: AbortSignal | undefined,
-  state: RAGState
-): AsyncGenerator<StreamEvent, void, unknown> {
-  try {
-    const citations = await retrieveAndCite(question, kbIds, classId, topK);
-    const { system, user } = buildRAGPrompt(citations, question, { systemPrompt, skillPrompts });
-
-    const llmMessages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
-      { role: 'system', content: system },
-    ];
-    if (history && history.length > 0) {
-      llmMessages.push(...history);
-    }
-    llmMessages.push({ role: 'user', content: user });
-
-    const stream = chatStream(llmMessages, signal);
-
-    for await (const delta of stream) {
-      yield { type: 'message', content: delta };
-    }
-
-    const full = await stream.fullAnswer;
-    yield { type: 'done', answer: full, citations };
-    state.resolveFinal({ answer: full, citations });
-  } catch (err: any) {
-    yield { type: 'error', message: err?.message || 'Unknown stream error' };
-    state.rejectFinal(err);
-  }
-}
-
-export async function answerWithRAGStream(
-  question: string,
-  kbIds: string[],
-  classId: string,
-  options?: {
-    topK?: number;
-    systemPrompt?: string | null;
-    skillPrompts?: { name: string; description?: string; prompt: string }[];
-    history?: { role: 'user' | 'assistant'; content: string }[];
-    signal?: AbortSignal;
-  }
-): Promise<RAGStreamResult> {
-  if (!isLLMConfigured()) {
-    throw new Error('LLM API not configured: LLM_BASE_URL or LLM_MODEL missing');
-  }
-
-  const state: RAGState = {
-    resolveFinal: () => {},
-    rejectFinal: () => {},
-  };
-
-  const finalPromise = new Promise<QAResult>((res, rej) => {
-    state.resolveFinal = res;
-    state.rejectFinal = rej;
-  });
-
-  const topK = options?.topK ?? 5;
-  const gen = streamRAG(
-    question,
-    kbIds,
-    classId,
-    topK,
-    options?.systemPrompt,
-    options?.skillPrompts,
-    options?.history,
-    options?.signal,
-    state
-  );
-
-  return {
-    [Symbol.asyncIterator]() {
-      return gen;
-    },
-    finalResult: finalPromise,
-  };
 }

@@ -4,7 +4,7 @@ import { generateId } from '../config';
 import { authMiddleware } from '../middleware/auth';
 import { guardSchool, guardClassMember } from '../middleware/guards';
 import { CustomError } from '../types';
-import { answerWithRAGStream } from '../lib/qa';
+import { streamAgentLoop } from '../lib/agent-loop';
 import { isLLMConfigured } from '../lib/llm';
 import { wrap } from '../lib/async';
 
@@ -25,13 +25,11 @@ agentMessagesRouter.post(
 
     const { classId, agentId } = req.params;
     const user = (req as any).user;
-    const { message, topK, conversationId } = req.body || {};
+    const { message, conversationId } = req.body || {};
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       throw new CustomError('message must be a non-empty string', 400, 'BAD_REQUEST');
     }
-
-    const effectiveTopK = topK ? Math.min(topK, 15) : 5;
 
     const agent = db.prepare(`SELECT * FROM agents WHERE id = ? AND class_id = ?`).get(agentId, classId) as any;
     if (!agent) throw new CustomError('Agent not found', 404, 'NOT_FOUND');
@@ -41,9 +39,6 @@ agentMessagesRouter.post(
     if (!isTeacherOrAdmin && agent.visibility === 'teachers') {
       throw new CustomError('Agent not found', 404, 'NOT_FOUND');
     }
-
-    const kbIds = (db.prepare('SELECT kb_id FROM agent_kbs WHERE agent_id = ?').all(agentId) as any[]).map((r) => r.kb_id);
-    const skillRows = db.prepare('SELECT s.name, s.description, s.prompt FROM agent_skills ak JOIN skills s ON s.id = ak.skill_id WHERE ak.agent_id = ?').all(agentId) as { name: string; description: string | null; prompt: string }[];
 
     let convoId: string;
     if (conversationId) {
@@ -86,8 +81,6 @@ agentMessagesRouter.post(
     });
 
     let fullAnswer = '';
-    let finalCitations: any[] = [];
-    let saveAssistantAfter = false;
     let savedAssistant = false;
 
     const saveAssistantMsg = () => {
@@ -96,34 +89,42 @@ agentMessagesRouter.post(
       const assistantMsgId = generateId();
       db.prepare(
         `INSERT INTO agent_messages (id, conversation_id, role, content, citations, created_at) VALUES (?, ?, 'assistant', ?, ?, ?)`
-      ).run(assistantMsgId, convoId, fullAnswer || '(no content)', finalCitations.length > 0 ? JSON.stringify(finalCitations) : null, Date.now());
+      ).run(assistantMsgId, convoId, fullAnswer || '(no content)', null, Date.now());
       db.prepare(`UPDATE agent_conversations SET last_message_at = ? WHERE id = ?`).run(Date.now(), convoId);
     };
 
     try {
-      const stream = await answerWithRAGStream(message, kbIds, classId, {
-        topK: effectiveTopK,
+      const stream = streamAgentLoop({
+        agentId,
+        classId,
+        userId: user.userId,
+        userMessage: message,
         systemPrompt: agent.system_prompt,
-        skillPrompts: skillRows.map((s) => ({ name: s.name, description: s.description ?? undefined, prompt: s.prompt })),
         history: prevMessages,
         signal: controller.signal,
       });
 
       for await (const evt of stream) {
         if (closed) break;
-        if (evt.type === 'message' && evt.content) {
+
+        if (evt.type === 'skill_load') {
+          res.write(`data: ${JSON.stringify({ type: 'skill_load', skillId: evt.skillId, skillName: evt.skillName })}\n\n`);
+        } else if (evt.type === 'tool_start') {
+          res.write(`data: ${JSON.stringify({ type: 'tool_start', toolName: evt.toolName, toolArgs: evt.toolArgs })}\n\n`);
+        } else if (evt.type === 'tool_end') {
+          res.write(`data: ${JSON.stringify({ type: 'tool_end', toolName: evt.toolName, toolResult: evt.toolResult, toolError: evt.toolError })}\n\n`);
+        } else if (evt.type === 'message' && evt.content) {
           fullAnswer += evt.content;
           res.write(`data: ${JSON.stringify({ type: 'message', content: evt.content })}\n\n`);
         } else if (evt.type === 'done') {
           fullAnswer = evt.answer ?? fullAnswer;
-          finalCitations = evt.citations ?? [];
-          const payload = { type: 'done', conversationId: convoId, answer: fullAnswer, citations: finalCitations };
+          const payload = { type: 'done', conversationId: convoId, answer: fullAnswer };
           res.write(`data: ${JSON.stringify(payload)}\n\n`);
           saveAssistantMsg();
           break;
         } else if (evt.type === 'error') {
           res.write(`data: ${JSON.stringify({ type: 'error', message: evt.message || 'Unknown error' })}\n\n`);
-          saveAssistantAfter = true;
+          saveAssistantMsg();
           break;
         }
       }
@@ -133,9 +134,8 @@ agentMessagesRouter.post(
           res.write(`data: ${JSON.stringify({ type: 'error', message: err?.message || 'Unknown stream error' })}\n\n`);
         } catch {}
       }
-      saveAssistantAfter = true;
+      saveAssistantMsg();
     } finally {
-      if (saveAssistantAfter) saveAssistantMsg();
       if (!closed) {
         try { res.end(); } catch {}
       }

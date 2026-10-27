@@ -20,6 +20,7 @@ export default function AgentChatPage() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toolLoading, setToolLoading] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -126,7 +127,22 @@ export default function AgentChatPage() {
                 }
                 return prev;
               });
+            } else if (event.type === 'skill_load') {
+              try {
+                console.log('[skill_load]', event.skillId, event.skillName);
+              } catch {}
+            } else if (event.type === 'tool_start') {
+              try {
+                setToolLoading(event.toolName || null);
+                console.log('[tool_start]', event.toolName);
+              } catch {}
+            } else if (event.type === 'tool_end') {
+              try {
+                setToolLoading(null);
+                console.log('[tool_end]', event.toolName);
+              } catch {}
             } else if (event.type === 'done') {
+              setToolLoading(null);
               setMessages((prev) => {
                 const updated = [...prev];
                 if (updated.length > 0) {
@@ -147,6 +163,7 @@ export default function AgentChatPage() {
                 });
               }
             } else if (event.type === 'error') {
+              setToolLoading(null);
               throw new Error(event.message || '智能体回复出错');
             }
           } catch (e: any) {
@@ -241,12 +258,39 @@ export default function AgentChatPage() {
             )}
             {agent && (
               <div style={{ marginTop: 8 }}>
-                {agent.kbs.map((kb) => (
+                {agent.kbs?.map((kb) => (
                   <span key={kb.kbId} className="tag kb">📚 {kb.name}</span>
                 ))}
-                {agent.skills.map((s) => (
+                {agent.skills?.map((s) => (
                   <span key={s.skillId} className="tag skill">⚡ {s.name}</span>
                 ))}
+                {agent.tools && agent.tools.map((t) => (
+                  <span
+                    key={t.toolId}
+                    style={{
+                      fontSize: 11,
+                      padding: '2px 8px',
+                      borderRadius: 10,
+                      marginRight: 4,
+                      marginTop: 2,
+                      background: t.source === 'builtin' ? '#34c75922' : '#007aff22',
+                      color: t.source === 'builtin' ? '#34c759' : '#007aff',
+                    }}
+                  >
+                    🪛 {t.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            {toolLoading && (
+              <div style={{ marginTop: 8, fontSize: 12, color: '#ff9500', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{
+                  display: 'inline-block',
+                  width: 8, height: 8, borderRadius: 4,
+                  background: '#ff9500',
+                  animation: 'blink 0.8s infinite',
+                }} />
+                正在调用: {toolLoading}
               </div>
             )}
           </div>

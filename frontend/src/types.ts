@@ -111,9 +111,46 @@ export interface Skill {
   classId: string;
   name: string;
   description: string | null;
-  prompt?: string;
+  skillContent?: string;
+  version?: string;
+  importSource?: string;
+  importUrl?: string;
+  triggers?: string[];
+  storagePath?: string;
   createdAt: number;
-  createdBy: string;
+}
+
+export interface Tool {
+  toolId: string;
+  classId: string;
+  name: string;
+  description: string | null;
+  inputSchema: Record<string, any>;
+  source: 'builtin' | 'mcp';
+  handlerKey?: string;
+  mcpServerId?: string;
+  mcpToolName?: string;
+  enabled: boolean;
+  createdAt: number;
+}
+
+export interface McpServer {
+  mcpServerId: string;
+  classId: string;
+  name: string;
+  url: string;
+  transport: string;
+  authType: 'none' | 'bearer' | 'api_key' | 'basic';
+  status: 'untested' | 'connected' | 'error';
+  lastError?: string | null;
+  createdAt: number;
+}
+
+export interface AgentToolRef {
+  toolId: string;
+  name: string;
+  source: 'builtin' | 'mcp';
+  handlerKey?: string;
 }
 
 export interface Agent {
@@ -127,10 +164,13 @@ export interface Agent {
   createdBy?: string;
   kbCount?: number;
   skillCount?: number;
+  toolCount?: number;
   kbs?: { kbId: string; name: string }[];
   skills?: { skillId: string; name: string }[];
+  tools?: AgentToolRef[];
   kbIds?: string[];
   skillIds?: string[];
+  toolIds?: string[];
 }
 
 export interface AgentConversation {
@@ -149,4 +189,19 @@ export interface AgentMessage {
   content: string;
   createdAt: number;
   citations: Citation[];
+}
+
+export interface SSEEvent {
+  type: 'skill_load' | 'tool_start' | 'tool_end' | 'message' | 'done' | 'error';
+  content?: string;
+  conversationId?: string;
+  answer?: string;
+  citations?: Citation[];
+  message?: string;
+  skillId?: string;
+  skillName?: string;
+  toolName?: string;
+  toolArgs?: any;
+  toolResult?: any;
+  toolError?: string;
 }

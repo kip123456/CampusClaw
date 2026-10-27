@@ -15,7 +15,7 @@ agentsRouter.post(
   guardClassTeacher,
   (req: Request, res: Response) => {
     const classId = req.params.classId;
-    const { name, description, systemPrompt, kbIds, skillIds, visibility } = req.body || {};
+    const { name, description, systemPrompt, kbIds, skillIds, toolIds, visibility } = req.body || {};
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       throw new CustomError('Missing required field: name', 400, 'BAD_REQUEST');
@@ -33,6 +33,7 @@ agentsRouter.post(
 
     const kbList: string[] = Array.isArray(kbIds) ? kbIds : [];
     const skillList: string[] = Array.isArray(skillIds) ? skillIds : [];
+    const toolList: string[] = Array.isArray(toolIds) ? toolIds : [];
 
     if (kbList.length > 0) {
       const kbRows = db
@@ -56,6 +57,17 @@ agentsRouter.post(
       }
     }
 
+    if (toolList.length > 0) {
+      const toolRows = db
+        .prepare(`SELECT id FROM tools WHERE class_id = ? AND id IN (${toolList.map(() => '?').join(',')})`)
+        .all(classId, ...toolList) as { id: string }[];
+      if (toolRows.length !== toolList.length) {
+        const valid = new Set(toolRows.map((r) => r.id));
+        const invalid = toolList.filter((id) => !valid.has(id));
+        throw new CustomError(`Invalid toolIds: ${invalid.join(', ')}`, 400, 'BAD_REQUEST');
+      }
+    }
+
     const dup = db
       .prepare('SELECT id FROM agents WHERE class_id = ? AND name = ?')
       .get(classId, name.trim());
@@ -73,6 +85,9 @@ agentsRouter.post(
       for (const skillId of skillList) {
         db.prepare(`INSERT INTO agent_skills (agent_id, skill_id) VALUES (?, ?)`).run(agentId, skillId);
       }
+      for (const toolId of toolList) {
+        db.prepare(`INSERT INTO agent_tools (agent_id, tool_id) VALUES (?, ?)`).run(agentId, toolId);
+      }
     });
     tx();
 
@@ -85,6 +100,7 @@ agentsRouter.post(
       visibility: vis,
       kbIds: kbList,
       skillIds: skillList,
+      toolIds: toolList,
       createdAt: Date.now(),
     });
   }
@@ -112,6 +128,7 @@ agentsRouter.get(
     for (const r of rows) {
       r.kbCount = (db.prepare('SELECT COUNT(*) as c FROM agent_kbs WHERE agent_id = ?').get(r.agentId) as any).c;
       r.skillCount = (db.prepare('SELECT COUNT(*) as c FROM agent_skills WHERE agent_id = ?').get(r.agentId) as any).c;
+      r.toolCount = (db.prepare('SELECT COUNT(*) as c FROM agent_tools WHERE agent_id = ?').get(r.agentId) as any).c;
     }
 
     res.json(rows);
@@ -142,6 +159,9 @@ agentsRouter.get(
     const skills = db.prepare(
       `SELECT ask.skill_id as skillId, s.name as name FROM agent_skills ask JOIN skills s ON ask.skill_id = s.id WHERE ask.agent_id = ?`
     ).all(agentId) as { skillId: string; name: string }[];
+    const tools = db.prepare(
+      `SELECT at.tool_id as toolId, t.name as name, t.source as source, t.handler_key as handlerKey FROM agent_tools at JOIN tools t ON at.tool_id = t.id WHERE at.agent_id = ?`
+    ).all(agentId) as { toolId: string; name: string; source: string; handlerKey: string }[];
 
     const result: any = {
       agentId: row.id,
@@ -152,8 +172,10 @@ agentsRouter.get(
       createdAt: row.created_at,
       kbs,
       skills,
+      tools,
       kbIds: kbs.map((k) => k.kbId),
       skillIds: skills.map((s) => s.skillId),
+      toolIds: tools.map((t) => t.toolId),
     };
 
     if (isTeacherOrAdmin) {
@@ -175,7 +197,7 @@ agentsRouter.put(
     const existing = db.prepare(`SELECT * FROM agents WHERE id = ? AND class_id = ?`).get(agentId, classId) as any;
     if (!existing) throw new CustomError('Agent not found', 404, 'NOT_FOUND');
 
-    const { name, description, systemPrompt, kbIds, skillIds, visibility } = req.body || {};
+    const { name, description, systemPrompt, kbIds, skillIds, toolIds, visibility } = req.body || {};
 
     const newName = name !== undefined ? String(name).trim() : existing.name;
     const newDesc = description !== undefined ? (description === null ? null : String(description)) : existing.description;
@@ -192,6 +214,7 @@ agentsRouter.put(
 
     let newKbList: string[] | undefined;
     let newSkillList: string[] | undefined;
+    let newToolList: string[] | undefined;
 
     if (kbIds !== undefined) {
       newKbList = Array.isArray(kbIds) ? kbIds : [];
@@ -214,6 +237,18 @@ agentsRouter.put(
         const valid = new Set(skillRows.map((r) => r.id));
         const invalid = newSkillList.filter((id) => !valid.has(id));
         throw new CustomError(`Invalid skillIds: ${invalid.join(', ')}`, 400, 'BAD_REQUEST');
+      }
+    }
+
+    if (toolIds !== undefined) {
+      newToolList = Array.isArray(toolIds) ? toolIds : [];
+      const toolRows = db
+        .prepare(`SELECT id FROM tools WHERE class_id = ? AND id IN (${newToolList.map(() => '?').join(',')})`)
+        .all(classId, ...newToolList) as { id: string }[];
+      if (toolRows.length !== newToolList.length) {
+        const valid = new Set(toolRows.map((r) => r.id));
+        const invalid = newToolList.filter((id) => !valid.has(id));
+        throw new CustomError(`Invalid toolIds: ${invalid.join(', ')}`, 400, 'BAD_REQUEST');
       }
     }
 
@@ -242,11 +277,19 @@ agentsRouter.put(
           db.prepare(`INSERT INTO agent_skills (agent_id, skill_id) VALUES (?, ?)`).run(agentId, skillId);
         }
       }
+
+      if (newToolList !== undefined) {
+        db.prepare(`DELETE FROM agent_tools WHERE agent_id = ?`).run(agentId);
+        for (const toolId of newToolList) {
+          db.prepare(`INSERT INTO agent_tools (agent_id, tool_id) VALUES (?, ?)`).run(agentId, toolId);
+        }
+      }
     });
     tx();
 
     const kbIdsFinal = (db.prepare('SELECT kb_id as kbId FROM agent_kbs WHERE agent_id = ?').all(agentId) as any[]).map((r) => r.kbId);
     const skillIdsFinal = (db.prepare('SELECT skill_id as skillId FROM agent_skills WHERE agent_id = ?').all(agentId) as any[]).map((r) => r.skillId);
+    const toolIdsFinal = (db.prepare('SELECT tool_id as toolId FROM agent_tools WHERE agent_id = ?').all(agentId) as any[]).map((r) => r.toolId);
 
     res.json({
       agentId,
@@ -257,6 +300,7 @@ agentsRouter.put(
       visibility: newVis,
       kbIds: kbIdsFinal,
       skillIds: skillIdsFinal,
+      toolIds: toolIdsFinal,
       createdAt: existing.created_at,
     });
   }

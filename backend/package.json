@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate:skills": "tsx scripts/migrate-skills-folder.ts"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

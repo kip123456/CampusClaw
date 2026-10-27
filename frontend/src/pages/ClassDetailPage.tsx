@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api';
-import type { Material, KnowledgeBase, KBDocument, QueryResult, User, MembersResponse, Citation, QAResponse, Skill, Agent } from '../types';
+import type { Material, KnowledgeBase, KBDocument, QueryResult, User, MembersResponse, Citation, QAResponse, Skill, Agent, Tool, McpServer } from '../types';
 
 export default function ClassDetailPage() {
   const { classId } = useParams<{ classId: string }>();
@@ -9,7 +9,7 @@ export default function ClassDetailPage() {
   const userStr = localStorage.getItem('user');
   const user: User | null = userStr ? JSON.parse(userStr) : null;
 
-  const [tab, setTab] = useState<'materials' | 'kbs' | 'members' | 'skills' | 'agents'>('materials');
+  const [tab, setTab] = useState<'materials' | 'kbs' | 'members' | 'skills' | 'tools' | 'mcps' | 'agents'>('materials');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [activeKb, setActiveKb] = useState<string>('');
@@ -50,6 +50,17 @@ export default function ClassDetailPage() {
   const [newSkillDesc, setNewSkillDesc] = useState('');
   const [newSkillPrompt, setNewSkillPrompt] = useState('');
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
+  const [skillImportMode, setSkillImportMode] = useState(false);
+  const [skillImportUrl, setSkillImportUrl] = useState('');
+  const skillZipInputRef = useRef<HTMLInputElement>(null);
+
+  const [tools, setTools] = useState<Tool[]>([]);
+  const [mcps, setMcps] = useState<McpServer[]>([]);
+  const [showNewMcp, setShowNewMcp] = useState(false);
+  const [newMcpName, setNewMcpName] = useState('');
+  const [newMcpUrl, setNewMcpUrl] = useState('');
+  const [newMcpAuthType, setNewMcpAuthType] = useState<'none' | 'bearer' | 'api_key' | 'basic'>('none');
+  const [newMcpAuthConfig, setNewMcpAuthConfig] = useState('');
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [showNewAgent, setShowNewAgent] = useState(false);
@@ -60,6 +71,7 @@ export default function ClassDetailPage() {
   const [newAgentVisibility, setNewAgentVisibility] = useState<'all' | 'teachers'>('all');
   const [newAgentKbIds, setNewAgentKbIds] = useState<Set<string>>(new Set());
   const [newAgentSkillIds, setNewAgentSkillIds] = useState<Set<string>>(new Set());
+  const [newAgentToolIds, setNewAgentToolIds] = useState<Set<string>>(new Set());
 
   const isTeacherOrAdmin = user && (user.role === 'teacher' || user.role === 'admin');
 
@@ -68,9 +80,11 @@ export default function ClassDetailPage() {
     if (tab === 'kbs') loadKbs();
     if (tab === 'members') loadMembers();
     if (tab === 'skills') loadSkills();
+    if (tab === 'tools' && isTeacherOrAdmin) loadTools();
+    if (tab === 'mcps' && isTeacherOrAdmin) loadMcps();
     if (tab === 'agents') {
       loadAgents();
-      if (isTeacherOrAdmin) { loadKbs(); loadSkills(); }
+      if (isTeacherOrAdmin) { loadKbs(); loadSkills(); loadTools(); }
     }
   }, [tab, classId]);
 
@@ -302,7 +316,7 @@ export default function ClassDetailPage() {
       await api.post(`/classes/${classId}/skills`, {
         name: newSkillName.trim(),
         description: newSkillDesc.trim() || null,
-        prompt: newSkillPrompt.trim(),
+        skillContent: newSkillPrompt.trim(),
       });
       setNewSkillName('');
       setNewSkillDesc('');
@@ -320,7 +334,7 @@ export default function ClassDetailPage() {
       await api.put(`/classes/${classId}/skills/${editingSkill.skillId}`, {
         name: newSkillName.trim(),
         description: newSkillDesc.trim() || null,
-        prompt: newSkillPrompt.trim(),
+        skillContent: newSkillPrompt.trim(),
       });
       setEditingSkill(null);
       setNewSkillName('');
@@ -346,8 +360,146 @@ export default function ClassDetailPage() {
     setEditingSkill(skill);
     setNewSkillName(skill.name);
     setNewSkillDesc(skill.description || '');
-    setNewSkillPrompt(skill.prompt || '');
+    setNewSkillPrompt(skill.skillContent || '');
     setShowNewSkill(true);
+  }
+
+  async function loadTools() {
+    try {
+      const res = await api.get<Tool[]>(`/classes/${classId}/tools`);
+      setTools(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function loadMcps() {
+    try {
+      const res = await api.get<McpServer[]>(`/classes/${classId}/mcp-servers`);
+      setMcps(res.data);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleDeleteTool(toolId: string) {
+    if (!confirm('确定删除此工具吗？')) return;
+    try {
+      await api.delete(`/classes/${classId}/tools/${toolId}`);
+      loadTools();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '删除失败');
+    }
+  }
+
+  async function handleBindTool(toolId: string, agentId: string) {
+    try {
+      await api.post(`/classes/${classId}/tools/${toolId}/bind`, { agentId });
+      loadTools();
+      loadAgents();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '绑定失败');
+    }
+  }
+
+  async function handleUnbindTool(toolId: string, agentId: string) {
+    try {
+      await api.delete(`/classes/${classId}/tools/${toolId}/bind`, { data: { agentId } });
+      loadTools();
+      loadAgents();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '解绑失败');
+    }
+  }
+
+  async function handleTestMcp(mcpServerId: string) {
+    try {
+      const res = await api.get(`/classes/${classId}/mcp-servers/${mcpServerId}/test`);
+      alert(res.data.message || '测试成功');
+      loadMcps();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '连接失败');
+      loadMcps();
+    }
+  }
+
+  async function handleImportMcpTools(mcpServerId: string) {
+    try {
+      const res = await api.post(`/classes/${classId}/mcp-servers/${mcpServerId}/import`);
+      const data = res.data as { imported: string[]; skipped: string[]; total: number };
+      alert(`导入完成：成功 ${data.imported.length} 个，跳过 ${data.skipped.length} 个`);
+      loadMcps();
+      if (tab === 'tools') loadTools();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '导入失败');
+    }
+  }
+
+  async function handleCreateMcp() {
+    if (!newMcpName.trim() || !newMcpUrl.trim()) return;
+    let authConfig: any = {};
+    if (newMcpAuthType !== 'none' && newMcpAuthConfig.trim()) {
+      try {
+        authConfig = JSON.parse(newMcpAuthConfig);
+      } catch {
+        alert('authConfig 必须是合法 JSON');
+        return;
+      }
+    }
+    try {
+      await api.post(`/classes/${classId}/mcp-servers`, {
+        name: newMcpName.trim(),
+        url: newMcpUrl.trim(),
+        authType: newMcpAuthType,
+        authConfig,
+      });
+      setNewMcpName('');
+      setNewMcpUrl('');
+      setNewMcpAuthType('none');
+      setNewMcpAuthConfig('');
+      setShowNewMcp(false);
+      loadMcps();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '创建失败');
+    }
+  }
+
+  async function handleDeleteMcp(mcpServerId: string) {
+    if (!confirm('删除 MCP Server 会同时删除通过它导入的所有工具。确定？')) return;
+    try {
+      await api.delete(`/classes/${classId}/mcp-servers/${mcpServerId}`);
+      loadMcps();
+      loadTools();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '删除失败');
+    }
+  }
+
+  async function handleImportSkillUrl() {
+    if (!skillImportUrl.trim()) return;
+    try {
+      await api.post(`/classes/${classId}/skills/import`, { source: 'url', location: skillImportUrl.trim() });
+      setSkillImportUrl('');
+      setSkillImportMode(false);
+      loadSkills();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '导入失败');
+    }
+  }
+
+  async function handleSkillZipUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      await api.post(`/classes/${classId}/skills/import`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      if (skillZipInputRef.current) skillZipInputRef.current.value = '';
+      setSkillImportMode(false);
+      loadSkills();
+    } catch (err: any) {
+      alert(err.response?.data?.message || '导入失败');
+    }
   }
 
   async function loadAgents() {
@@ -368,6 +520,7 @@ export default function ClassDetailPage() {
       visibility: newAgentVisibility,
       kbIds: Array.from(newAgentKbIds),
       skillIds: Array.from(newAgentSkillIds),
+      toolIds: Array.from(newAgentToolIds),
     };
     try {
       if (editingAgent) {
@@ -400,8 +553,9 @@ export default function ClassDetailPage() {
     setNewAgentDesc(agent.description || '');
     setNewAgentSystemPrompt(agent.systemPrompt || '');
     setNewAgentVisibility(agent.visibility);
-    setNewAgentKbIds(new Set(agent.kbs.map((k) => k.kbId)));
-    setNewAgentSkillIds(new Set(agent.skills.map((s) => s.skillId)));
+    setNewAgentKbIds(new Set(agent.kbs?.map((k) => k.kbId) || []));
+    setNewAgentSkillIds(new Set(agent.skills?.map((s) => s.skillId) || []));
+    setNewAgentToolIds(new Set(agent.tools?.map((t) => t.toolId) || []));
     setShowNewAgent(true);
   }
 
@@ -412,6 +566,7 @@ export default function ClassDetailPage() {
     setNewAgentVisibility('all');
     setNewAgentKbIds(new Set());
     setNewAgentSkillIds(new Set());
+    setNewAgentToolIds(new Set());
   }
 
   function toggleAgentKb(kbId: string) {
@@ -426,6 +581,14 @@ export default function ClassDetailPage() {
     setNewAgentSkillIds((prev) => {
       const next = new Set(prev);
       if (next.has(skillId)) next.delete(skillId); else next.add(skillId);
+      return next;
+    });
+  }
+
+  function toggleAgentTool(toolId: string) {
+    setNewAgentToolIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(toolId)) next.delete(toolId); else next.add(toolId);
       return next;
     });
   }
@@ -509,6 +672,8 @@ export default function ClassDetailPage() {
         {isTeacherOrAdmin && (
           <>
             <div className={`tab ${tab === 'skills' ? 'active' : ''}`} onClick={() => setTab('skills')}>技能</div>
+            <div className={`tab ${tab === 'tools' ? 'active' : ''}`} onClick={() => setTab('tools')}>工具</div>
+            <div className={`tab ${tab === 'mcps' ? 'active' : ''}`} onClick={() => setTab('mcps')}>MCP Servers</div>
           </>
         )}
         <div className={`tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>成员管理</div>
@@ -1001,9 +1166,43 @@ export default function ClassDetailPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h4 style={{ margin: 0 }}>技能列表</h4>
             {isTeacherOrAdmin && !showNewSkill && (
-              <button onClick={() => setShowNewSkill(true)}>+ 新建技能</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setSkillImportMode(!skillImportMode)}>
+                  {skillImportMode ? '取消导入' : '+ 导入技能'}
+                </button>
+                <button onClick={() => setShowNewSkill(true)}>+ 新建技能</button>
+              </div>
             )}
           </div>
+
+          {skillImportMode && isTeacherOrAdmin && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <h4 style={{ marginTop: 0 }}>导入外部技能</h4>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', marginBottom: 4, fontSize: 13 }}>方式 1: 上传 ZIP 包（包含 SKILL.md）</label>
+                <input
+                  type="file"
+                  accept=".zip"
+                  ref={skillZipInputRef}
+                  onChange={handleSkillZipUpload}
+                  style={{ padding: '6px 8px', fontSize: 13 }}
+                />
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ display: 'block', marginBottom: 4, fontSize: 13 }}>方式 2: 远程 URL</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    value={skillImportUrl}
+                    onChange={(e) => setSkillImportUrl(e.target.value)}
+                    placeholder="https://example.com/skill.zip"
+                    style={{ flex: 1 }}
+                  />
+                  <button onClick={handleImportSkillUrl} disabled={!skillImportUrl.trim()}>导入</button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {showNewSkill && isTeacherOrAdmin && (
             <div className="card">
@@ -1023,7 +1222,7 @@ export default function ClassDetailPage() {
                 placeholder="简短描述这个技能的用途"
               />
               <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>
-                Prompt（技能提示词，将注入到智能体回答中）
+                Skill Content (Markdown) — 将作为 SKILL.md 正文
               </label>
               <textarea
                 value={newSkillPrompt}
@@ -1055,19 +1254,23 @@ export default function ClassDetailPage() {
           <div className="card" style={{ padding: 0 }}>
             {skills.length === 0 ? (
               <div style={{ padding: 20, color: '#8e8e93', textAlign: 'center' }}>
-                暂无技能 — 技能是可复用的提示词模板，可被智能体绑定使用
+                暂无技能 — 技能是可复用的 SKILL.md 工作流，可被智能体绑定使用
               </div>
             ) : (
               skills.map((s) => (
                 <div key={s.skillId} className="list-item" style={{ flexWrap: 'wrap', gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 500 }}>⚡ {s.name}</div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+                      {s.version && <span style={{ fontSize: 11, background: '#007aff22', color: '#007aff', padding: '1px 6px', borderRadius: 8 }}>v{s.version}</span>}
+                      {s.importSource && <span style={{ fontSize: 11, background: '#ff950022', color: '#ff9500', padding: '1px 6px', borderRadius: 8 }}>📦 {s.importSource}</span>}
+                    </div>
                     {s.description && (
                       <div style={{ fontSize: 12, color: '#6e6e73', marginTop: 2 }}>{s.description}</div>
                     )}
-                    {s.prompt && isTeacherOrAdmin && (
+                    {s.skillContent && isTeacherOrAdmin && (
                       <div style={{ fontSize: 12, color: '#8e8e93', marginTop: 4, background: '#f2f2f7', padding: 8, borderRadius: 6, whiteSpace: 'pre-wrap' }}>
-                        {s.prompt.length > 200 ? s.prompt.slice(0, 200) + '...' : s.prompt}
+                        {s.skillContent.length > 200 ? s.skillContent.slice(0, 200) + '...' : s.skillContent}
                       </div>
                     )}
                   </div>
@@ -1214,6 +1417,40 @@ export default function ClassDetailPage() {
                 </div>
               )}
 
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>绑定工具</label>
+              {tools.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#8e8e93', marginBottom: 12 }}>暂无工具 — 内置工具和 MCP 导入的工具都会在此显示</div>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                  {tools.map((t) => {
+                    const isBuiltin = t.source === 'builtin';
+                    const active = newAgentToolIds.has(t.toolId);
+                    return (
+                      <label
+                        key={t.toolId}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 14,
+                          border: `1px solid ${active ? '#34c759' : '#d1d1d6'}`,
+                          background: active ? '#34c75922' : '#fff',
+                          color: active ? '#34c759' : '#6e6e73',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={active}
+                          onChange={() => toggleAgentTool(t.toolId)}
+                          style={{ display: 'none' }}
+                        />
+                        🪛 {t.name} <span style={{ fontSize: 10, opacity: 0.7 }}>[{isBuiltin ? '内置' : 'MCP'}]</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <button onClick={handleCreateOrUpdateAgent} disabled={!newAgentName.trim()}>
                   {editingAgent ? '保存修改' : '创建智能体'}
@@ -1234,7 +1471,7 @@ export default function ClassDetailPage() {
 
           {agents.length === 0 ? (
             <div className="card" style={{ textAlign: 'center', color: '#8e8e93' }}>
-              暂无智能体 — 智能体可以结合知识库和技能进行问答
+              暂无智能体 — 智能体可以结合知识库、技能和工具进行问答
             </div>
           ) : (
             agents.map((a) => (
@@ -1249,6 +1486,7 @@ export default function ClassDetailPage() {
                       <span className="tag visibility">{a.visibility === 'all' ? '所有人可见' : '仅教师'}</span>
                       {a.kbCount ? <span className="tag kb">📚 {a.kbCount} 个知识库</span> : null}
                       {a.skillCount ? <span className="tag skill">⚡ {a.skillCount} 个技能</span> : null}
+                      {a.toolCount ? <span className="tag" style={{ background: '#34c75922', color: '#34c759', border: '1px solid #34c759' }}>🪛 {a.toolCount} 个工具</span> : null}
                     </div>
                   </div>
                   {isTeacherOrAdmin && (
@@ -1271,6 +1509,182 @@ export default function ClassDetailPage() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {tab === 'tools' && isTeacherOrAdmin && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h4 style={{ margin: 0 }}>工具列表</h4>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={loadTools}>刷新</button>
+            </div>
+          </div>
+          <div className="card" style={{ padding: 0 }}>
+            {tools.length === 0 ? (
+              <div style={{ padding: 20, color: '#8e8e93', textAlign: 'center' }}>
+                暂无工具 — 内置工具会自动初始化，MCP 导入的工具可在 MCP Servers 标签页批量导入
+              </div>
+            ) : (
+              tools.map((t) => {
+                const isBuiltin = t.source === 'builtin';
+                const boundAgents = agents.filter((a) => a.tools?.some((at) => at.toolId === t.toolId));
+                return (
+                  <div key={t.toolId} className="list-item" style={{ flexWrap: 'wrap', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        🪛 {t.name}
+                        <span style={{
+                          fontSize: 10,
+                          padding: '1px 6px',
+                          borderRadius: 8,
+                          background: isBuiltin ? '#34c75922' : '#007aff22',
+                          color: isBuiltin ? '#34c759' : '#007aff',
+                        }}>
+                          {isBuiltin ? '内置' : 'MCP'}
+                        </span>
+                      </div>
+                      {t.description && (
+                        <div style={{ fontSize: 12, color: '#6e6e73', marginTop: 2 }}>{t.description}</div>
+                      )}
+                      {t.handlerKey && (
+                        <div style={{ fontSize: 11, color: '#8e8e93', marginTop: 2 }}>handler: {t.handlerKey}</div>
+                      )}
+                      {!t.enabled && (
+                        <div style={{ fontSize: 11, color: '#ff3b30', marginTop: 2 }}>已禁用</div>
+                      )}
+                      {boundAgents.length > 0 && (
+                        <div style={{ fontSize: 11, color: '#34c759', marginTop: 4 }}>
+                          已绑定: {boundAgents.map((a) => a.name).join(', ')}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {boundAgents.length === 0 && agents.length > 0 && (
+                        <select
+                          onChange={(e) => { if (e.target.value) { handleBindTool(t.toolId, e.target.value); e.target.value = ''; } }}
+                          defaultValue=""
+                          style={{ padding: '4px 6px', fontSize: 12 }}
+                        >
+                          <option value="" disabled>绑定到 Agent</option>
+                          {agents.map((a) => (
+                            <option key={a.agentId} value={a.agentId}>{a.name}</option>
+                          ))}
+                        </select>
+                      )}
+                      <button
+                        onClick={() => handleDeleteTool(t.toolId)}
+                        style={{ padding: '4px 12px', fontSize: 12, background: '#ff3b30' }}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'mcps' && isTeacherOrAdmin && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h4 style={{ margin: 0 }}>MCP Servers</h4>
+            {!showNewMcp && <button onClick={() => setShowNewMcp(true)}>+ 注册 MCP Server</button>}
+          </div>
+
+          {showNewMcp && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <h4 style={{ marginTop: 0 }}>注册 MCP Server</h4>
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>名称 *</label>
+              <input
+                type="text"
+                value={newMcpName}
+                onChange={(e) => setNewMcpName(e.target.value)}
+                placeholder="例如：本地算术计算服务"
+              />
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>URL *</label>
+              <input
+                type="text"
+                value={newMcpUrl}
+                onChange={(e) => setNewMcpUrl(e.target.value)}
+                placeholder="https://your-mcp-server.com/mcp"
+              />
+              <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>认证方式</label>
+              <select value={newMcpAuthType} onChange={(e) => setNewMcpAuthType(e.target.value as any)}>
+                <option value="none">无认证</option>
+                <option value="bearer">Bearer Token</option>
+                <option value="api_key">API Key (自定义 Header)</option>
+                <option value="basic">Basic Auth</option>
+              </select>
+              {newMcpAuthType !== 'none' && (
+                <>
+                  <label style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>authConfig (JSON)</label>
+                  <textarea
+                    value={newMcpAuthConfig}
+                    onChange={(e) => setNewMcpAuthConfig(e.target.value)}
+                    rows={3}
+                    style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d1d6', borderRadius: 8, fontSize: 14, marginBottom: 12, resize: 'vertical', fontFamily: 'inherit' }}
+                    placeholder={newMcpAuthType === 'bearer' ? '{"token": "your-token"}' : newMcpAuthType === 'api_key' ? '{"header": "X-API-Key", "value": "your-key"}' : '{"username": "user", "password": "pass"}'}
+                  />
+                </>
+              )}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={handleCreateMcp} disabled={!newMcpName.trim() || !newMcpUrl.trim()}>
+                  注册
+                </button>
+                <button style={{ background: '#8e8e93' }} onClick={() => { setShowNewMcp(false); setNewMcpName(''); setNewMcpUrl(''); setNewMcpAuthType('none'); setNewMcpAuthConfig(''); }}>
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="card" style={{ padding: 0 }}>
+            {mcps.length === 0 ? (
+              <div style={{ padding: 20, color: '#8e8e93', textAlign: 'center' }}>
+                暂无 MCP Server — 注册后可测试连接并批量导入远端工具
+              </div>
+            ) : (
+              mcps.map((m) => (
+                <div key={m.mcpServerId} className="list-item" style={{ flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 500 }}>🔌 {m.name}</div>
+                    <div style={{ fontSize: 12, color: '#6e6e73', marginTop: 2, wordBreak: 'break-all' }}>{m.url}</div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          padding: '1px 6px',
+                          borderRadius: 8,
+                          background: m.status === 'connected' ? '#34c75922' : m.status === 'error' ? '#ff3b3022' : '#8e8e9322',
+                          color: m.status === 'connected' ? '#34c759' : m.status === 'error' ? '#ff3b30' : '#8e8e93',
+                        }}
+                      >
+                        {m.status === 'connected' ? '● 已连接' : m.status === 'error' ? '● 错误' : '○ 未测试'}
+                      </span>
+                      <span style={{ fontSize: 11, color: '#8e8e93' }}>auth: {m.authType}</span>
+                      {m.lastError && (
+                        <span style={{ fontSize: 11, color: '#ff3b30' }}>{m.lastError}</span>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => handleTestMcp(m.mcpServerId)} style={{ padding: '4px 12px', fontSize: 12 }}>
+                      测试连接
+                    </button>
+                    <button onClick={() => handleImportMcpTools(m.mcpServerId)} style={{ padding: '4px 12px', fontSize: 12, background: '#007aff', color: '#fff' }}>
+                      批量导入
+                    </button>
+                    <button onClick={() => handleDeleteMcp(m.mcpServerId)} style={{ padding: '4px 12px', fontSize: 12, background: '#ff3b30' }}>
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>

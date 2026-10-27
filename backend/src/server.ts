@@ -8,6 +8,7 @@ import { initSchema } from './db/schema';
 import { seed } from './db/seed';
 import { startIndexWorker, stopIndexWorker } from './lib/index-worker';
 import { requestLogger } from './middleware/auth';
+import * as fs from 'fs';
 
 import { authRouter } from './routes/auth';
 import { adminRouter } from './routes/admin';
@@ -15,6 +16,8 @@ import { classesRouter } from './routes/classes';
 import { materialsRouter } from './routes/materials';
 import { kbsRouter } from './routes/kbs';
 import { skillsRouter } from './routes/skills';
+import { toolsRouter } from './routes/tools';
+import { mcpServersRouter } from './routes/mcpServers';
 import { agentsRouter } from './routes/agents';
 import { agentMessagesRouter } from './routes/agentMessages';
 
@@ -40,6 +43,8 @@ app.use('/api/classes', classesRouter);
 app.use('/api/classes', materialsRouter);
 app.use('/api/classes', kbsRouter);
 app.use('/api/classes', skillsRouter);
+app.use('/api/classes', toolsRouter);
+app.use('/api/classes', mcpServersRouter);
 app.use('/api/classes', agentsRouter);
 app.use('/api/classes', agentMessagesRouter);
 
@@ -66,10 +71,11 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 
 async function main() {
   initSchema();
+  fs.mkdirSync(config.storageSkillsDir, { recursive: true });
   await seed();
 
-  app.listen(config.port, () => {
-    console.log(`[SERVER] CampusClaw backend listening on port ${config.port}`);
+  app.listen(config.port, config.host, () => {
+    console.log(`[SERVER] CampusClaw backend listening on ${config.host}:${config.port}`);
     startIndexWorker();
   });
 

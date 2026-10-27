@@ -7,13 +7,48 @@ export function isLLMConfigured(): boolean {
   return !!(config.llmBaseUrl && config.llmModel);
 }
 
+export interface LLMMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_call_id?: string;
+  tool_calls?: ToolCall[];
+}
+
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+export interface LLMTool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, any>;
+  };
+}
+
+export interface ChatOptions {
+  tools?: LLMTool[];
+}
+
 export interface ChatStreamCallbacks {
   onDelta?: (delta: string) => void;
 }
 
+export interface ChatResult {
+  content: string | null;
+  toolCalls: ToolCall[];
+}
+
 export async function chat(
-  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
-): Promise<string> {
+  messages: LLMMessage[],
+  options?: ChatOptions
+): Promise<ChatResult> {
   if (!isLLMConfigured()) {
     throw new Error('LLM API not configured: LLM_BASE_URL or LLM_MODEL missing');
   }
@@ -23,16 +58,22 @@ export async function chat(
 
   try {
     const url = config.llmBaseUrl.replace(/\/+$/, '') + '/chat/completions';
+    const body: any = {
+      model: config.llmModel,
+      messages,
+    };
+    if (options?.tools && options.tools.length > 0) {
+      body.tools = options.tools;
+      body.tool_choice = 'auto';
+    }
+
     const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${config.llmApiKey}`,
       },
-      body: JSON.stringify({
-        model: config.llmModel,
-        messages,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 
@@ -43,11 +84,15 @@ export async function chat(
     }
 
     const json: any = await res.json();
-    const content = json?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') {
+    const msg = json?.choices?.[0]?.message;
+    if (!msg) {
       throw new Error(`LLM API unexpected response: ${JSON.stringify(json).slice(0, 200)}`);
     }
-    return content.trim();
+
+    const content: string | null = typeof msg.content === 'string' ? msg.content.trim() : null;
+    const toolCalls: ToolCall[] = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+
+    return { content, toolCalls };
   } catch (err: any) {
     if (err?.name === 'AbortError') {
       throw new Error(`LLM API timed out after ${TIMEOUT_MS}ms`);

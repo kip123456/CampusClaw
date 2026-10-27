@@ -95,8 +95,13 @@ export const schemaStatements: string[] = [
     id TEXT PRIMARY KEY,
     class_id TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    prompt TEXT NOT NULL,
+    prompt TEXT,
+    storage_path TEXT,
     description TEXT,
+    version TEXT DEFAULT '1.0.0',
+    import_source TEXT DEFAULT 'builtin',
+    import_url TEXT,
+    triggers_json TEXT DEFAULT '[]',
     created_at INTEGER NOT NULL,
     UNIQUE(class_id, name)
   )`,
@@ -137,6 +142,38 @@ export const schemaStatements: string[] = [
     created_at INTEGER NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_agent_messages_conv ON agent_messages(conversation_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS mcp_servers (
+    id TEXT PRIMARY KEY,
+    class_id TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    transport TEXT NOT NULL DEFAULT 'http',
+    auth_type TEXT NOT NULL DEFAULT 'none' CHECK(auth_type IN ('none','bearer','api_key','basic')),
+    auth_config_json TEXT DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'untested' CHECK(status IN ('untested','connected','error')),
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE(class_id, name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS tools (
+    id TEXT PRIMARY KEY,
+    class_id TEXT NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    input_schema_json TEXT DEFAULT '{}',
+    source TEXT NOT NULL CHECK(source IN ('builtin','mcp')),
+    handler_key TEXT,
+    mcp_server_id TEXT REFERENCES mcp_servers(id) ON DELETE SET NULL,
+    mcp_tool_name TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+    created_at INTEGER NOT NULL,
+    UNIQUE(class_id, name)
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_tools (
+    agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
+    tool_id TEXT REFERENCES tools(id) ON DELETE CASCADE,
+    PRIMARY KEY(agent_id, tool_id)
+  )`,
 ];
 
 export function initSchema(): void {
@@ -200,4 +237,28 @@ export function initSchema(): void {
       console.log('[DB] Migrated: agent_messages.citations column added');
     }
   } catch {}
+
+  const skillInfo = db.prepare('PRAGMA table_info(skills)').all() as { name: string }[];
+  const skillCols = new Set(skillInfo.map((c) => c.name));
+
+  if (!skillCols.has('storage_path')) {
+    db.exec(`ALTER TABLE skills ADD COLUMN storage_path TEXT`);
+    console.log('[DB] Migrated: skills.storage_path column added');
+  }
+  if (!skillCols.has('version')) {
+    db.exec(`ALTER TABLE skills ADD COLUMN version TEXT DEFAULT '1.0.0'`);
+    console.log('[DB] Migrated: skills.version column added');
+  }
+  if (!skillCols.has('import_source')) {
+    db.exec(`ALTER TABLE skills ADD COLUMN import_source TEXT DEFAULT 'builtin'`);
+    console.log('[DB] Migrated: skills.import_source column added');
+  }
+  if (!skillCols.has('import_url')) {
+    db.exec(`ALTER TABLE skills ADD COLUMN import_url TEXT`);
+    console.log('[DB] Migrated: skills.import_url column added');
+  }
+  if (!skillCols.has('triggers_json')) {
+    db.exec(`ALTER TABLE skills ADD COLUMN triggers_json TEXT DEFAULT '[]'`);
+    console.log('[DB] Migrated: skills.triggers_json column added');
+  }
 }

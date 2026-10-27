@@ -8,6 +8,7 @@ export const config = {
   sqlitePath: process.env.SQLITE_PATH || './data/campusclaw.db',
   chromaUrl: process.env.CHROMA_URL || 'http://localhost:8000',
   port: parseInt(process.env.PORT || '3000', 10),
+  host: process.env.HOST || '0.0.0.0',
   embedBaseUrl: process.env.EMBED_BASE_URL || '',
   embedModel: process.env.EMBED_MODEL || '',
   embedDim: parseInt(process.env.EMBED_DIM || '2048', 10),
@@ -15,6 +16,8 @@ export const config = {
   llmBaseUrl: process.env.LLM_BASE_URL || '',
   llmModel: process.env.LLM_MODEL || '',
   llmApiKey: process.env.LLM_API_KEY || '',
+  storageSkillsDir: process.env.STORAGE_SKILLS_DIR || './data/skills',
+  mcpAuthEncryptionKey: process.env.MCP_AUTH_ENCRYPTION_KEY || '',
 };
 
 const missing: string[] = [];
