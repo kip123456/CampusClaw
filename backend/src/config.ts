@@ -18,6 +18,7 @@ export const config = {
   llmApiKey: process.env.LLM_API_KEY || '',
   storageSkillsDir: process.env.STORAGE_SKILLS_DIR || './data/skills',
   mcpAuthEncryptionKey: process.env.MCP_AUTH_ENCRYPTION_KEY || '',
+  debugLogFile: process.env.DEBUG_LOG_FILE || '',
 };
 
 const missing: string[] = [];

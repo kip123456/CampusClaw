@@ -4,6 +4,7 @@ import { executeTool } from './tool-handlers';
 import { selectSkills, loadSkillsByIds } from './skill-selector';
 import { listBuiltinToolSchemas, getBuiltinTool } from './tool-handlers';
 import { createMcpConfigFromDb, callTool as callMcpTool } from './mcp-client';
+import { debugLog, resetDebugLog } from './debug-log';
 
 export interface AgentLoopEvent {
   type: 'skill_load' | 'tool_start' | 'tool_end' | 'message' | 'done' | 'error';
@@ -111,6 +112,13 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
   const { agentId, classId, userId, userMessage, systemPrompt, history, signal } = options;
   const events: AgentLoopEvent[] = [];
 
+  resetDebugLog();
+  debugLog('====== AGENT LOOP START ======');
+  debugLog('agentId:', agentId, 'classId:', classId, 'userId:', userId);
+  debugLog('userMessage:', userMessage);
+  debugLog('history.count:', history?.length ?? 0);
+  debugLog('systemPrompt (from agent):', systemPrompt ?? '(use default)');
+
   const availableTools = await getAgentTools(agentId);
   const llmTools: LLMTool[] = availableTools.map((t) => ({
     type: 'function',
@@ -160,6 +168,10 @@ export async function runAgentLoop(options: RunAgentLoopOptions): Promise<AgentL
     }
   }
   messages.push({ role: 'user', content: userMessage });
+
+  debugLog('final systemMsg:', systemMsg);
+  debugLog('availableTools:', JSON.stringify(availableTools.map(t => ({ name: t.name, source: t.source, description: t.description }))));
+  debugLog('selectedSkills:', JSON.stringify(loadedSkills.map(s => ({ name: s.name, bodyLen: s.body.length }))));
 
   let finalAnswer = '';
 
@@ -271,6 +283,13 @@ export async function* streamAgentLoop(
 
   const { agentId, classId, userId, userMessage, systemPrompt, history, signal } = options;
 
+  resetDebugLog();
+  debugLog('====== STREAM AGENT LOOP START ======');
+  debugLog('agentId:', agentId, 'classId:', classId, 'userId:', userId);
+  debugLog('userMessage:', userMessage);
+  debugLog('history.count:', history?.length ?? 0);
+  debugLog('systemPrompt (from agent):', systemPrompt ?? '(use default)');
+
   const availableTools = await getAgentTools(agentId);
   const llmTools: LLMTool[] = availableTools.map((t) => ({
     type: 'function',
@@ -320,6 +339,10 @@ export async function* streamAgentLoop(
     }
   }
   messages.push({ role: 'user', content: userMessage });
+
+  debugLog('final systemMsg:', systemMsg);
+  debugLog('availableTools:', JSON.stringify(availableTools.map(t => ({ name: t.name, source: t.source, description: t.description }))));
+  debugLog('selectedSkills:', JSON.stringify(loadedSkills.map(s => ({ name: s.name, bodyLen: s.body.length }))));
 
   for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
     if (signal?.aborted) {

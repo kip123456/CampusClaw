@@ -1,4 +1,5 @@
 import { config } from '../config';
+import { debugLog } from './debug-log';
 
 const TIMEOUT_MS = 30_000;
 const STREAM_TIMEOUT_MS = 120_000;
@@ -67,6 +68,22 @@ export async function chat(
       body.tool_choice = 'auto';
     }
 
+    debugLog('=== LLM REQUEST ===');
+    debugLog('URL:', url);
+    debugLog('model:', body.model);
+    debugLog('messages.count:', body.messages.length);
+    body.messages.forEach((m: any, i: number) => {
+      const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      debugLog(`  msg[${i}] role=${m.role} contentLen=${c.length} content=`, c);
+      if (m.tool_calls) debugLog(`  msg[${i}] tool_calls=`, JSON.stringify(m.tool_calls));
+      if (m.tool_call_id) debugLog(`  msg[${i}] tool_call_id=`, m.tool_call_id);
+    });
+    if (body.tools) {
+      debugLog('tools.count:', body.tools.length);
+      body.tools.forEach((t: any, i: number) => debugLog(`  tool[${i}]=`, JSON.stringify(t)));
+    }
+    debugLog('=== END REQUEST ===');
+
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -91,6 +108,11 @@ export async function chat(
 
     const content: string | null = typeof msg.content === 'string' ? msg.content.trim() : null;
     const toolCalls: ToolCall[] = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+
+    debugLog('=== LLM RESPONSE ===');
+    debugLog('content:', content ?? '(null)');
+    debugLog('tool_calls:', JSON.stringify(toolCalls));
+    debugLog('=== END RESPONSE ===');
 
     return { content, toolCalls };
   } catch (err: any) {
